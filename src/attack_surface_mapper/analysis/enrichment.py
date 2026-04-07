@@ -114,6 +114,9 @@ def compute_priority(vulnerability: Vulnerability) -> tuple[str, str]:
     elif confidence == 'medium' and vulnerability.needs_manual_validation:
         score -= 1
         reasons.append('requiere validación manual')
+    if category == 'headers' and (vulnerability.severity or '').lower() in {'low', 'info'}:
+        score = min(score, 1)
+        reasons.append('cabecera de bajo impacto')
     if category == 'discovery':
         score = 1
         reasons.append('hallazgo de descubrimiento, impacto limitado')

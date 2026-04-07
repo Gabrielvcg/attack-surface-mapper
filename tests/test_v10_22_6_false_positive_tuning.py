@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from attack_surface_mapper.analysis.correlation import correlate_vulnerabilities
+from attack_surface_mapper.analysis.enrichment import enrich_vulnerabilities
 from attack_surface_mapper.http_client import HttpResponse
+from attack_surface_mapper.models.vulnerability import Vulnerability
 from attack_surface_mapper.validators.api_validator import APIValidator
 from attack_surface_mapper.validators.auth_validator import AuthValidator
 from attack_surface_mapper.validators.headers_validator import HeadersValidator
@@ -109,3 +112,62 @@ def test_auth_cookie_flags_ignore_non_auth_cookie_and_do_not_require_httponly_on
     assert titles.count('Cookie Without SameSite Attribute') == 2
     assert not any('analytics_id' in (finding.evidence or '') for finding in findings)
     assert not any(finding.title == 'Cookie Without HttpOnly Flag' and 'csrftoken' in (finding.evidence or '') for finding in findings)
+
+
+def test_correlation_does_not_merge_login_headers_fingerprint_and_form_discovery() -> None:
+    location = 'http://localhost:8080/login.php'
+    items = [
+        Vulnerability(
+            source='custom-header-check',
+            title='Missing Content-Security-Policy Header',
+            description='d',
+            severity='medium',
+            target=location,
+            matched_at=location,
+            category='headers',
+        ),
+        Vulnerability(
+            source='custom-fingerprint-check',
+            title='Technology Fingerprint Detected (Apache httpd)',
+            description='d',
+            severity='low',
+            target=location,
+            matched_at=location,
+            category='discovery',
+        ),
+        Vulnerability(
+            source='custom-discovery-check',
+            title='Login Form Discovered Via Crawl',
+            description='d',
+            severity='low',
+            target=location,
+            matched_at=location,
+            category='discovery',
+        ),
+    ]
+
+    correlated = correlate_vulnerabilities(items)
+
+    assert len(correlated) == 3
+    assert {finding.title for finding in correlated} == {
+        'Missing Content-Security-Policy Header',
+        'Technology Fingerprint Detected (Apache httpd)',
+        'Login Form Discovered Via Crawl',
+    }
+    assert all(finding.source_count == 1 for finding in correlated)
+
+
+def test_low_impact_missing_headers_keep_low_priority() -> None:
+    vuln = Vulnerability(
+        source='custom-header-check',
+        title='Missing Referrer-Policy Header',
+        description='d',
+        severity='low',
+        target='http://localhost:3000/',
+        category='headers',
+        confidence='high',
+    )
+
+    enrich_vulnerabilities([vuln])
+
+    assert vuln.priority == 'low'

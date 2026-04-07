@@ -25,11 +25,11 @@ PROFILE_DEFAULTS: dict[str, dict[str, object]] = {
     'deep': {'severity': 'low,medium,high,critical', 'rate_limit': 100, 'timeout': 15, 'retries': 2, 'validator_timeout': 8, 'crawl_max_pages': 40, 'crawl_max_depth': 2, 'http_mode': 'passive', 'crawl_include_js': True},
     'passive': {'severity': 'medium,high,critical', 'rate_limit': 150, 'timeout': 10, 'retries': 1, 'validator_timeout': 6, 'crawl_max_pages': 25, 'crawl_max_depth': 2, 'http_mode': 'passive', 'crawl_include_js': False},
     'active': {'severity': 'low,medium,high,critical', 'rate_limit': 100, 'timeout': 15, 'retries': 2, 'validator_timeout': 10, 'crawl_max_pages': 50, 'crawl_max_depth': 3, 'http_mode': 'active', 'crawl_include_js': True},
-    'active-aggressive': {'severity': 'low,medium,high,critical', 'rate_limit': 100, 'timeout': 15, 'retries': 2, 'validator_timeout': 10, 'crawl_max_pages': 50, 'crawl_max_depth': 3, 'http_mode': 'active', 'crawl_include_js': True},
-    'passive-stealth': {'severity': 'low,medium,high,critical', 'rate_limit': 30, 'timeout': 8, 'retries': 0, 'validator_timeout': 5, 'crawl_max_pages': 12, 'crawl_max_depth': 1, 'http_mode': 'passive', 'crawl_include_js': False},
-    'passive-recon': {'severity': 'medium,high,critical', 'rate_limit': 90, 'timeout': 10, 'retries': 1, 'validator_timeout': 6, 'crawl_max_pages': 25, 'crawl_max_depth': 2, 'http_mode': 'passive', 'crawl_include_js': True},
-    'passive-recon-safe': {'severity': 'medium,high,critical', 'rate_limit': 45, 'timeout': 8, 'retries': 0, 'validator_timeout': 5, 'crawl_max_pages': 20, 'crawl_max_depth': 2, 'http_mode': 'passive', 'crawl_include_js': True},
-    'passive-recon-enum': {'severity': 'medium,high,critical', 'rate_limit': 90, 'timeout': 10, 'retries': 1, 'validator_timeout': 6, 'crawl_max_pages': 25, 'crawl_max_depth': 2, 'http_mode': 'passive', 'crawl_include_js': True},
+    'active-aggressive': {'severity': 'low,medium,high,critical', 'rate_limit': 100, 'timeout': 15, 'retries': 2, 'validator_timeout': 10, 'crawl_max_pages': 50, 'crawl_max_depth': 4, 'http_backend': 'requests', 'crawler_backend': 'scrapling', 'crawler_scrapling_mode': 'dynamic', 'http_mode': 'active', 'crawl_include_js': True, 'run_nuclei': True, 'run_nmap': True, 'baseline_probe': True, 'observed_only': False, 'run_panels': True, 'run_auth': True, 'run_api': True, 'run_sensitive_files': True, 'run_secrets': True},
+    'passive-stealth': {'severity': 'low,medium,high,critical', 'rate_limit': 30, 'timeout': 8, 'retries': 0, 'validator_timeout': 5, 'crawl_max_pages': 12, 'crawl_max_depth': 1, 'http_backend': 'requests', 'crawler_backend': 'requests', 'http_mode': 'passive', 'crawl_include_js': False, 'run_nuclei': False, 'baseline_probe': False, 'observed_only': True, 'run_panels': False, 'run_auth': False, 'run_api': False, 'run_sensitive_files': False, 'run_secrets': False},
+    'passive-recon': {'severity': 'medium,high,critical', 'rate_limit': 90, 'timeout': 10, 'retries': 1, 'validator_timeout': 6, 'crawl_max_pages': 25, 'crawl_max_depth': 2, 'http_backend': 'requests', 'crawler_backend': 'requests', 'http_mode': 'passive', 'crawl_include_js': True, 'run_nuclei': True, 'baseline_probe': True, 'observed_only': False, 'run_panels': True, 'run_auth': True, 'run_api': True, 'run_sensitive_files': True, 'run_secrets': True},
+    'passive-recon-safe': {'severity': 'medium,high,critical', 'rate_limit': 45, 'timeout': 8, 'retries': 0, 'validator_timeout': 5, 'crawl_max_pages': 20, 'crawl_max_depth': 2, 'http_backend': 'requests', 'crawler_backend': 'requests', 'http_mode': 'passive', 'crawl_include_js': True, 'run_nuclei': False, 'baseline_probe': False, 'observed_only': True, 'run_panels': False, 'run_auth': False, 'run_api': False, 'run_sensitive_files': False, 'run_secrets': False},
+    'passive-recon-enum': {'severity': 'medium,high,critical', 'rate_limit': 90, 'timeout': 10, 'retries': 1, 'validator_timeout': 6, 'crawl_max_pages': 25, 'crawl_max_depth': 2, 'http_backend': 'requests', 'crawler_backend': 'requests', 'http_mode': 'passive', 'crawl_include_js': True, 'run_nuclei': True, 'baseline_probe': True, 'observed_only': False, 'run_panels': True, 'run_auth': True, 'run_api': True, 'run_sensitive_files': True, 'run_secrets': True},
 }
 
 
@@ -248,7 +248,7 @@ def scan_one(target: str, args: argparse.Namespace, config: dict[str, Any], targ
     panel_paths = split_csv(get_setting(args, config, 'panel_paths'))
     report_formats = split_csv(get_setting(args, config, 'report_formats'))
     skip_reports = bool(get_setting(args, config, 'skip_reports', False) or args.skip_reports)
-    use_nmap = bool(get_setting(args, config, 'use_nmap', False) or args.use_nmap)
+    use_nmap = bool(get_setting(args, config, 'use_nmap', profile.get('run_nmap', False)) or args.use_nmap)
     nmap_top_ports = safe_int(get_setting(args, config, 'nmap_top_ports', 100), 100)
     nmap_args = split_csv(get_setting(args, config, 'nmap_args'))
     nmap_timing = get_setting(args, config, 'nmap_timing')
@@ -260,17 +260,17 @@ def scan_one(target: str, args: argparse.Namespace, config: dict[str, Any], targ
     crawl_max_pages = safe_int(get_setting(args, config, 'crawl_max_pages', profile['crawl_max_pages']), int(profile['crawl_max_pages']))
     crawl_max_depth = safe_int(get_setting(args, config, 'crawl_max_depth', profile['crawl_max_depth']), int(profile['crawl_max_depth']))
     http_mode = str(get_setting(args, config, 'http_mode', profile.get('http_mode', 'passive')) or profile.get('http_mode', 'passive')).lower()
-    http_backend = str(get_setting(args, config, 'http_backend', 'auto') or 'auto').lower()
-    crawler_backend = str(get_setting(args, config, 'crawler_backend', http_backend) or http_backend).lower()
-    crawler_scrapling_mode = str(get_setting(args, config, 'crawler_scrapling_mode', 'auto') or 'auto').lower()
+    http_backend = str(get_setting(args, config, 'http_backend', profile.get('http_backend', 'auto')) or profile.get('http_backend', 'auto')).lower()
+    crawler_backend = str(get_setting(args, config, 'crawler_backend', profile.get('crawler_backend', http_backend)) or profile.get('crawler_backend', http_backend)).lower()
+    crawler_scrapling_mode = str(get_setting(args, config, 'crawler_scrapling_mode', profile.get('crawler_scrapling_mode', 'auto')) or profile.get('crawler_scrapling_mode', 'auto')).lower()
     crawl_include_js_default = bool(profile.get('crawl_include_js', False)) or http_mode == 'active'
     crawl_include_js = bool(get_setting(args, config, 'crawl_include_js', crawl_include_js_default) or args.crawl_include_js or http_mode == 'active')
     user_agent = str(get_setting(args, config, 'user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36') or 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36')
-    run_nuclei = bool(get_setting(args, config, 'run_nuclei', True))
-    baseline_probe = bool(get_setting(args, config, 'baseline_probe', True))
-    observed_only = bool(get_setting(args, config, 'observed_only', False))
+    run_nuclei = bool(get_setting(args, config, 'run_nuclei', profile.get('run_nuclei', True)))
+    baseline_probe = bool(get_setting(args, config, 'baseline_probe', profile.get('baseline_probe', True)))
+    observed_only = bool(get_setting(args, config, 'observed_only', profile.get('observed_only', False)))
     browser_click_budget = safe_int(get_setting(args, config, 'browser_click_budget', 12), 12)
-    browser_discovery_enabled = bool(get_setting(args, config, 'browser_discovery_enabled', True))
+    browser_discovery_enabled = bool(get_setting(args, config, 'browser_discovery_enabled', profile.get('browser_discovery_enabled', True)))
 
     target_paths = build_target_paths(targets_dir, target)
     report_paths = build_report_paths(target_paths['reports_dir'], report_formats, skip_reports)
@@ -290,13 +290,13 @@ def scan_one(target: str, args: argparse.Namespace, config: dict[str, Any], targ
         include_raw=args.include_raw,
         compare_with_json=args.compare_with_json,
         run_headers=not bool(get_setting(args, config, 'skip_headers', False) or args.skip_headers),
-        run_panels=not bool(get_setting(args, config, 'skip_panels', False) or args.skip_panels),
+        run_panels=not bool(get_setting(args, config, 'skip_panels', not bool(profile.get('run_panels', True))) or args.skip_panels),
         run_tls=not bool(get_setting(args, config, 'skip_tls', False) or args.skip_tls),
         run_crawl=not bool(get_setting(args, config, 'skip_crawl', False) or args.skip_crawl),
-        run_secrets=not bool(get_setting(args, config, 'skip_secrets', False) or args.skip_secrets),
-        run_auth=not bool(get_setting(args, config, 'skip_auth', False) or args.skip_auth),
-        run_api=not bool(get_setting(args, config, 'skip_api', False) or args.skip_api),
-        run_sensitive_files=not bool(get_setting(args, config, 'skip_sensitive_files', False) or args.skip_sensitive_files),
+        run_secrets=not bool(get_setting(args, config, 'skip_secrets', not bool(profile.get('run_secrets', True))) or args.skip_secrets),
+        run_auth=not bool(get_setting(args, config, 'skip_auth', not bool(profile.get('run_auth', True))) or args.skip_auth),
+        run_api=not bool(get_setting(args, config, 'skip_api', not bool(profile.get('run_api', True))) or args.skip_api),
+        run_sensitive_files=not bool(get_setting(args, config, 'skip_sensitive_files', not bool(profile.get('run_sensitive_files', True))) or args.skip_sensitive_files),
         validator_timeout=validator_timeout,
         crawl_max_pages=crawl_max_pages,
         crawl_max_depth=crawl_max_depth,
@@ -380,7 +380,7 @@ def main() -> int:
         'targets': [r.target for r in results],
         'aggregate_reports': aggregate_paths,
         'errors': errors,
-        'profile': str(config.get('profile', '') or ''),
+        'profile': str(get_setting(args, config, 'profile', '') or ''),
         'pipeline': {
             'stages': sorted({stage for r in results for stage in getattr(r, 'stages_executed', [])}),
             'collectors': sorted({collector for r in results for collector in getattr(r, 'collectors_used', [])}),

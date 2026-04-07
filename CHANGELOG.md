@@ -1,5 +1,17 @@
 # attack_surface_mapper_project_v10.11
 
+## v10.22.6 false-positive tuning
+
+- Alinea `--profile passive-stealth`, `--profile passive-recon-safe` y `--profile active-aggressive` con la semántica de los YAML para evitar que la CLI ejecute Nuclei, Nmap o probes hardcoded cuando no toca.
+- El manifest de ejecución ya registra el perfil usado por CLI, no solo el definido en YAML.
+- Evita correlacionar hallazgos heterogéneos solo porque comparten rutas como `/login`: headers, fingerprints y formularios ya no se fusionan en un falso hallazgo de mayor prioridad.
+- Reduce ruido en headers: checks de CSP/X-Frame/Referrer se aplican solo a documentos de navegador, y cabeceras de bajo impacto quedan con prioridad baja.
+- Ajusta CORS: `Access-Control-Allow-Origin: *` sin credenciales se clasifica como señal low/likely, no como hallazgo confirmado de mayor impacto.
+- Trata `/login` como superficie de descubrimiento, no como panel expuesto.
+- Endurece detección de ficheros sensibles: `.zip` y `.DS_Store` requieren firma real, no solo `Content-Type`.
+- Reduce ruido de cookies: se ignoran cookies no relacionadas con sesión/auth y no se exige `HttpOnly` en cookies CSRF/XSRF.
+- Validado contra Docker local con OWASP Juice Shop y DVWA en perfiles `passive-stealth` y `passive-recon-safe`.
+
 Versión 10.10 del proyecto: mantiene el pipeline de **Nuclei + validaciones propias + correlación + reporting**, conserva **descubrimiento opcional con Nmap** y mejora el crawling con **Scrapling + fallback a requests**, además de promover formularios y pistas de endpoints descubiertos a nuevas validaciones.
 
 ## Qué aporta la v10
