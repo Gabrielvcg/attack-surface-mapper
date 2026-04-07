@@ -1,0 +1,1 @@
+{"template-id":"example-panel","matcher-name":"panel-detected","host":"https://example.com","matched-at":"https://example.com/admin","info":{"name":"Exposed Admin Panel","description":"An exposed admin panel was found.","severity":"high","tags":["panel","exposure"],"reference":["https://example.com/reference"],"classification":{"cwe-id":["CWE-200"],"cve-id":[],"cvss-score":7.5}}}

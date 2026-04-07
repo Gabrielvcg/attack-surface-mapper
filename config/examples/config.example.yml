@@ -1,0 +1,43 @@
+profile: deep
+workers: 4
+run_name: ejemplo_batch_v10
+
+targets:
+  - https://example.com
+  - http://localhost:3000
+
+nuclei:
+  severity: low,medium,high,critical
+  tags: exposure,misconfig,cve
+  rate_limit: 100
+  timeout: 15
+  retries: 2
+  templates: null
+
+nmap:
+  enabled: true
+  top_ports: 100
+  args: -sC,-T4
+  timing: -T4
+
+modules:
+  headers: true
+  panels: true
+  tls: true
+  crawl: true
+  secrets: true
+  auth: true
+  api: true
+  sensitive_files: true
+
+crawl:
+  max_pages: 40
+  max_depth: 2
+  include_js: true
+
+panel_paths: /admin,/swagger,/metrics,/actuator,/management,/api-docs
+
+reports:
+  title: Informe batch de vulnerabilidades y superficie expuesta
+  formats: md,html,csv,summary-json,comparison-json
+  skip_reports: false
