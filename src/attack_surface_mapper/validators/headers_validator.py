@@ -7,6 +7,24 @@ from attack_surface_mapper.models.vulnerability import Vulnerability
 from attack_surface_mapper.validators.base import BaseValidator
 
 
+def _header_value(headers: dict[str, str], name: str) -> str:
+    lower_name = name.lower()
+    for key, value in headers.items():
+        if str(key).lower() == lower_name:
+            return str(value)
+    return ''
+
+
+def _is_browser_document(response: HttpResponse) -> bool:
+    content_type = _header_value(response.headers, 'Content-Type').lower()
+    body_preview = (response.text or '')[:800].lstrip().lower()
+    if any(token in content_type for token in ('text/html', 'application/xhtml+xml')):
+        return True
+    if not content_type and any(token in body_preview for token in ('<!doctype html', '<html', '<form', '<title')):
+        return True
+    return False
+
+
 class HeadersValidator(BaseValidator):
     REQUIRED_HEADERS: dict[str, dict[str, object]] = {
         'content-security-policy': {
@@ -52,8 +70,11 @@ class HeadersValidator(BaseValidator):
         headers = {key.lower(): value for key, value in response.headers.items()}
         parsed = urlparse(response.url)
         base_target = response.url
+        browser_document = _is_browser_document(response)
 
         for header_name, metadata in self.REQUIRED_HEADERS.items():
+            if not browser_document:
+                continue
             if header_name in headers:
                 continue
 

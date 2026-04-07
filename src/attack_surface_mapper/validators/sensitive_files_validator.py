@@ -85,9 +85,15 @@ class SensitiveFilesValidator(BaseValidator):
             strong = any(token in preview for token in ('app_key=', 'secret_key=', 'database_url=', 'api_key=', 'token='))
             ok = key_matches >= 2 and strong
             return ok, 'high' if ok else 'low', 'env-like key=value patterns'
-        if path in {'/application.properties', '/application.yml', '/docker-compose.yml'}:
-            ok = any(token in preview for token in ('spring.', 'server:', 'datasource', 'management.', 'services:', 'version:'))
-            return ok, 'medium' if ok else 'low', 'configuration markers'
+        if path == '/application.properties':
+            ok = any(token in preview for token in ('spring.', 'server.port', 'datasource.', 'management.', 'security.', 'password='))
+            return ok, 'medium' if ok else 'low', 'application.properties markers'
+        if path == '/application.yml':
+            ok = any(token in preview for token in ('spring:', 'datasource:', 'management:', 'security:', 'database:', 'password:'))
+            return ok, 'medium' if ok else 'low', 'application.yml markers'
+        if path == '/docker-compose.yml':
+            ok = 'services:' in preview and any(token in preview for token in ('image:', 'build:', 'ports:', 'environment:'))
+            return ok, 'medium' if ok else 'low', 'docker-compose markers'
         if path == '/robots.txt':
             ok = 'disallow:' in preview or 'user-agent:' in preview
             return ok, 'medium' if ok else 'low', 'robots syntax'
@@ -96,15 +102,17 @@ class SensitiveFilesValidator(BaseValidator):
             return ok, 'medium' if ok else 'low', 'xml sitemap markers'
         if path == '/backup.zip':
             raw = response.content[:4]
-            ok = raw.startswith(b'PK\x03\x04') or 'application/zip' in content_type
-            return ok, 'high' if ok else 'low', 'zip signature or content-type'
+            ok = raw.startswith(b'PK\x03\x04')
+            reason = 'zip signature' if ok else f'content-type only ({content_type or "absent"})'
+            return ok, 'high' if ok else 'low', reason
         if path == '/db.sql':
             ok = any(token in preview for token in ('create table', 'insert into', 'sql dump', '-- phpmyadmin'))
             return ok, 'high' if ok else 'low', 'sql dump markers'
         if path == '/.DS_Store':
             raw = response.content[:8]
-            ok = raw.startswith(bytes.fromhex('0000000142756431')) or 'application/octet-stream' in content_type
-            return ok, 'medium' if ok else 'low', 'ds_store markers'
+            ok = raw.startswith(bytes.fromhex('0000000142756431'))
+            reason = 'ds_store signature' if ok else f'content-type only ({content_type or "absent"})'
+            return ok, 'medium' if ok else 'low', reason
         return bool(preview.strip()), 'low', 'generic non-empty response'
 
     @staticmethod

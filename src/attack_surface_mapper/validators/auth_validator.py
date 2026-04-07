@@ -65,7 +65,11 @@ class AuthValidator(BaseValidator):
         for cookie_header in raw_cookie_headers:
             lower_header = cookie_header.lower()
             name = cookie_header.split('=', 1)[0].strip() or 'cookie'
-            if 'httponly' not in lower_header:
+            is_session_cookie = self._is_likely_session_cookie(name)
+            is_csrf_cookie = self._is_csrf_cookie(name)
+            if not is_session_cookie and not is_csrf_cookie:
+                continue
+            if is_session_cookie and 'httponly' not in lower_header:
                 findings.append(Vulnerability(source='custom-auth-check', title='Cookie Without HttpOnly Flag', description='La aplicación establece una cookie sin el flag HttpOnly.', severity='medium', target=url, evidence=f'Set-Cookie: {self._truncate(cookie_header)}', cwe=['CWE-1004'], tags=['auth', 'cookie', 'session'], template_id=f'custom-auth-cookie-httponly-{name.lower()}', matched_at=url, host=host, port=port, scheme=scheme, type='http', category='authentication', confidence='high', verification_status='confirmed'))
             if (scheme == 'https') and ('secure' not in lower_header):
                 findings.append(Vulnerability(source='custom-auth-check', title='Cookie Without Secure Flag', description='La aplicación HTTPS establece una cookie sin el flag Secure.', severity='medium', target=url, evidence=f'Set-Cookie: {self._truncate(cookie_header)}', cwe=['CWE-614'], tags=['auth', 'cookie', 'session'], template_id=f'custom-auth-cookie-secure-{name.lower()}', matched_at=url, host=host, port=port, scheme=scheme, type='http', category='authentication', confidence='high', verification_status='confirmed'))
@@ -263,6 +267,18 @@ class AuthValidator(BaseValidator):
     @staticmethod
     def _truncate(value: str, max_length: int = 160) -> str:
         return value if len(value) <= max_length else value[:max_length] + '...[truncated]'
+
+    @staticmethod
+    def _is_csrf_cookie(name: str) -> bool:
+        lowered = (name or '').strip().lower()
+        return any(token in lowered for token in ('csrf', 'xsrf'))
+
+    @classmethod
+    def _is_likely_session_cookie(cls, name: str) -> bool:
+        lowered = (name or '').strip().lower()
+        if cls._is_csrf_cookie(lowered):
+            return False
+        return any(token in lowered for token in ('session', 'sess', 'sid', 'jwt', 'auth', 'access', 'refresh', 'remember', 'login'))
 
     @classmethod
     def _is_public_auth_entry(cls, path: str, response_url: str, body_preview: str) -> bool:
