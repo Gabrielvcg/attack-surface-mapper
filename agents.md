@@ -127,9 +127,9 @@ python -m py_compile main.py $(find src -name '*.py')
 Estado verificado el 2026-04-07:
 
 - `python -m py_compile main.py $(find src -name '*.py')` pasa sin errores.
-- `python -m pytest` da `59 passed`.
+- `python -m pytest` da `64 passed` tras los ajustes de reduccion de falsos positivos en headers, CORS, paneles, cookies y ficheros sensibles.
 
-El proyecto no es repo Git en este workspace.
+El proyecto es un repo Git local con remoto `origin` en `git@github.com:Gabrielvcg/attack-surface-mapper.git`.
 
 ## Precauciones Conocidas
 

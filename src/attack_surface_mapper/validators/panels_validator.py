@@ -54,19 +54,19 @@ class PanelsValidator(BaseValidator):
                     Vulnerability(
                         source='custom-panel-check',
                         title=self._build_title(path, response),
-                        description=f'Se ha detectado un panel o endpoint potencialmente sensible accesible en {final_url}.',
+                        description=self._description_for(path, final_url),
                         severity=self._severity_for(path, confidence),
                         target=final_url,
                         evidence=f'Status {response.status_code} en {final_url}; validación={reason}',
                         cwe=['CWE-200'],
-                        tags=['panel', 'exposure'],
+                        tags=self._tags_for(path),
                         template_id=f'custom-panel-{path.strip('/') or "root"}',
                         matched_at=final_url,
                         host=parsed.hostname,
                         port=str(parsed.port) if parsed.port else None,
                         scheme=parsed.scheme,
                         type='http',
-                        category='panel-exposure',
+                        category=self._category_for(path),
                         confidence=confidence,
                         needs_manual_validation=verification != 'confirmed',
                         verification_status=verification,
@@ -155,5 +155,23 @@ class PanelsValidator(BaseValidator):
         if path == '/dashboard':
             return f'Accessible Dashboard ({status})'
         if path == '/login':
-            return f'Public Login Panel ({status})'
+            return f'Login Surface Discovered ({status})'
         return f'Accessible Sensitive Endpoint ({status})'
+
+    @staticmethod
+    def _category_for(path: str) -> str:
+        if path == '/login':
+            return 'discovery'
+        return 'panel-exposure'
+
+    @staticmethod
+    def _tags_for(path: str) -> list[str]:
+        if path == '/login':
+            return ['panel', 'auth', 'discovery']
+        return ['panel', 'exposure']
+
+    @staticmethod
+    def _description_for(path: str, final_url: str) -> str:
+        if path == '/login':
+            return f'Se ha descubierto una superficie de autenticación pública en {final_url}; se registra como inventario de superficie, no como acceso indebido.'
+        return f'Se ha detectado un panel o endpoint potencialmente sensible accesible en {final_url}.'

@@ -8,6 +8,14 @@ from attack_surface_mapper.validators.base import BaseValidator
 from attack_surface_mapper.validators.http_fingerprint import baseline_fingerprint, looks_like_baseline, normalise_text
 
 
+def _header_value(headers: dict[str, str], name: str) -> str:
+    lower_name = name.lower()
+    for key, value in (headers or {}).items():
+        if str(key).lower() == lower_name:
+            return str(value)
+    return ''
+
+
 class APIValidator(BaseValidator):
     DEFAULT_PATHS: tuple[str, ...] = (
         '/swagger',
@@ -48,14 +56,15 @@ class APIValidator(BaseValidator):
         except RequestError:
             return findings
 
-        allow_origin = response.headers.get('Access-Control-Allow-Origin', '')
-        allow_credentials = response.headers.get('Access-Control-Allow-Credentials', '')
+        allow_origin = _header_value(response.headers, 'Access-Control-Allow-Origin').strip()
+        allow_credentials = _header_value(response.headers, 'Access-Control-Allow-Credentials').strip()
+        credentials_enabled = allow_credentials.lower() == 'true'
         if allow_origin == '*':
             findings.append(Vulnerability(
                 source='custom-api-check',
-                title='Permissive CORS Policy',
+                title='Permissive CORS Policy' if credentials_enabled else 'Broad CORS Policy Observed',
                 description='El servidor permite cualquier origen mediante Access-Control-Allow-Origin: *.',
-                severity='medium',
+                severity='medium' if credentials_enabled else 'low',
                 target=response.url,
                 evidence=f'Access-Control-Allow-Origin: {allow_origin}; Access-Control-Allow-Credentials: {allow_credentials or "<absent>"}',
                 cwe=['CWE-942'],
@@ -67,8 +76,9 @@ class APIValidator(BaseValidator):
                 scheme=scheme,
                 type='http',
                 category='api',
-                confidence='high',
-                verification_status='confirmed',
+                confidence='high' if credentials_enabled else 'medium',
+                needs_manual_validation=not credentials_enabled,
+                verification_status='confirmed' if credentials_enabled else 'likely',
             ))
         return findings
 
