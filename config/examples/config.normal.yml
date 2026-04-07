@@ -1,0 +1,35 @@
+profile: normal
+workers: 2
+
+targets:
+  - http://example.com
+
+nuclei:
+  severity: low,medium,high,critical
+  rate_limit: 80
+  timeout: 12
+  retries: 2
+
+nmap:
+  enabled: true
+  top_ports: 100
+  args: -sV
+
+modules:
+  headers: true
+  panels: true
+  tls: true
+  crawl: true
+  secrets: false
+  auth: true
+  api: true
+  sensitive_files: true
+
+crawl:
+  max_pages: 30
+  max_depth: 2
+
+panel_paths: /admin,/management,/api-docs
+
+reports:
+  formats: md,html

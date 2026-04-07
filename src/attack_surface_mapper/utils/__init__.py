@@ -1,0 +1,2 @@
+
+from attack_surface_mapper.utils.asset_normalizer import normalize_asset

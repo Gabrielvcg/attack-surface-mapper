@@ -1,0 +1,451 @@
+# attack_surface_mapper_project_v10.11
+
+Versión 10.10 del proyecto: mantiene el pipeline de **Nuclei + validaciones propias + correlación + reporting**, conserva **descubrimiento opcional con Nmap** y mejora el crawling con **Scrapling + fallback a requests**, además de promover formularios y pistas de endpoints descubiertos a nuevas validaciones.
+
+## Qué aporta la v10
+
+- Integración opcional de **Nmap** (`-Pn -sV`) para descubrimiento de servicios.
+- Backend HTTP unificado para validadores y crawling: `auto`, `requests` o `scrapling`.
+- Dos perfiles nuevos orientados a operación: `passive` y `active`.
+- Integración de Scrapling en todo el acceso HTTP de la herramienta:
+  - crawler
+  - validadores HTTP
+  - fingerprinting de respuestas
+  - debug probe
+- Corrección del mapper de respuestas de Scrapling: ahora prioriza `status`, `headers`, `body` y `encoding`, normaliza cabeceras case-insensitive y evita perder HTML/content-type en el crawler.
+- Modo `active` para render dinámico con Scrapling (`DynamicSession`) y descubrimiento mejorado en superficies modernas.
+- Hallazgos de red convertidos al mismo modelo común `Vulnerability`.
+- Enriquecimiento de puertos/servicios con categorías como:
+  - `network-service`
+  - `database`
+  - `remote-access`
+  - `message-broker`
+  - `admin-surface`
+  - `web-service`
+- Reporting agregado con hallazgos HTTP y de red en la misma ejecución.
+- Soporte por CLI y por YAML para activar/desactivar Nmap.
+- Persistencia del XML bruto de Nmap por target (`nmap_raw.xml`) cuando Nmap está activado.
+
+## Capacidades principales
+
+### Detección HTTP / AppSec
+
+- Nuclei para checks rápidos y extensibles.
+- Validaciones propias de:
+  - headers de seguridad
+  - TLS
+  - paneles expuestos
+  - autenticación / endpoints protegidos
+  - API / Swagger / GraphQL / OpenAPI
+  - ficheros sensibles
+  - crawling básico y detección de secretos
+
+### Detección de red (opcional)
+
+- Descubrimiento de puertos/servicios con Nmap.
+- Clasificación de servicios abiertos como superficie de red.
+- Correlación con hallazgos ya encontrados por Nuclei.
+- Casos típicos útiles:
+  - `epmd` / RabbitMQ
+  - SSH / FTP
+  - Redis / MongoDB / MySQL / PostgreSQL
+  - HTTP / HTTPS auxiliares
+
+### Calidad del análisis
+
+- modelo de hallazgo unificado
+- deduplicación
+- correlación
+- prioridad final separada de la severidad
+- `confidence`
+- `verification_status`
+- separación entre:
+  - vulnerabilidades y misconfiguraciones
+  - superficie descubierta o protegida
+
+### Operatividad
+
+- target único o múltiples targets
+- configuración por CLI y YAML
+- ejecución por lotes
+- workers en paralelo
+- informes por target y agregados
+
+## Requisitos
+
+- Python 3.11+
+- **Nuclei** instalado en `PATH`
+- plantillas de Nuclei actualizadas
+- **Nmap** instalado en `PATH` si quieres usar descubrimiento de red
+
+Instalación:
+
+```bash
+pip install -r requirements.txt
+# si usas Scrapling, instala también navegadores/dependencias
+python -m playwright install
+# opcional para modo dynamic; fetcher no necesita navegador
+```
+
+## Uso rápido
+
+### 1) Escaneo básico
+
+```bash
+python main.py https://example.com
+```
+
+### 2) Escaneo profundo con Nmap
+
+```bash
+python main.py https://example.com --profile deep --use-nmap --nmap-top-ports 200 --debug
+```
+
+### 3) Batch scan desde fichero
+
+```bash
+python main.py --targets-file targets.txt --workers 3 --profile deep --use-nmap
+```
+
+### 4) Configuración desde YAML
+
+```bash
+python main.py --config config/examples/config.example.yml
+```
+
+## Opciones de línea de comandos
+
+### Entrada
+
+- `target`
+- `--targets-file targets.txt`
+- `--config config.yml`
+
+### Generales
+
+- `--profile {quick,normal,deep,passive,active}`
+- `--workers 4`
+- `--output-root scans`
+- `--run-name nombre_scan`
+
+### Nuclei
+
+- `--severity low,medium,high,critical`
+- `--tags exposure,misconfig,cve`
+- `--templates /ruta/templates`
+- `--rate-limit 100`
+- `--timeout 15`
+- `--retries 2`
+- `--include-raw`
+- `--show-stderr`
+- `--no-follow-redirects`
+- `--compare ruta/vulnerabilities.json`
+
+### Nmap
+
+- `--use-nmap`
+- `--nmap-top-ports 100`
+- `--nmap-args -sC,-T4`
+- `--nmap-timing -T4`
+
+Notas:
+- La herramienta ejecuta Nmap como `nmap -Pn -sV --top-ports <N> -oX -` y añade los argumentos extra indicados.
+- Si Nmap no está instalado y `--use-nmap` está activo, el resultado se mantiene pero se registrará el aviso correspondiente.
+
+### Módulos HTTP
+
+- `--skip-headers`
+- `--skip-panels`
+- `--skip-tls`
+- `--skip-crawl`
+- `--skip-secrets`
+- `--skip-auth`
+- `--skip-api`
+- `--skip-sensitive-files`
+- `--validator-timeout 8`
+- `--crawl-max-pages 40`
+- `--crawl-max-depth 2`
+- `--crawl-include-js`
+- `--http-backend {auto,requests,scrapling}`
+- `--http-mode {passive,active}`
+- `--panel-paths /admin,/swagger,/metrics,/actuator,/management`
+
+### Reporting
+
+- `--report-title "Informe corporativo"`
+- `--report-formats md,html,csv,summary-json,comparison-json`
+- `--skip-reports`
+- `--debug`
+
+## Estructura de salida
+
+Cada ejecución crea una carpeta tipo:
+
+```text
+scans/
+  2026-03-21_180316/
+    run_manifest.json
+    reports/
+      aggregate_report.md
+      aggregate_findings.csv
+      aggregate_summary.json
+    targets/
+      http_example.com/
+        nuclei_raw.jsonl
+        nmap_raw.xml
+        vulnerabilities.json
+        debug_counts.json
+        debug_probe.json
+        reports/
+          report.md
+          report.html
+          report.csv
+          report.summary.json
+```
+
+## Interpretación de resultados
+
+La herramienta separa los hallazgos en tres grupos conceptuales:
+
+1. **Vulnerabilidades / misconfiguraciones**
+   - exposición real
+   - configuraciones inseguras
+   - servicios abiertos que conviene revisar
+
+2. **Superficie descubierta o protegida**
+   - endpoints sensibles que existen pero devuelven `401/403`
+   - documentación/API protegida
+   - superficie útil para enumeración
+
+3. **Pendientes de validación manual**
+   - hallazgos con señales suficientes pero sin confirmación fuerte
+
+## Ejemplos
+
+### Escaneo web sin TLS ni crawling
+
+```bash
+python main.py https://example.com --skip-tls --skip-crawl
+```
+
+### Escaneo de varios targets con Nmap y reportes
+
+```bash
+python main.py --targets-file targets.txt --workers 4 --profile deep --use-nmap --nmap-top-ports 200 --report-formats md,html,csv
+```
+
+### Baseline comparando una ejecución anterior
+
+```bash
+python main.py https://example.com --compare scans/old_run/targets/https_example.com/vulnerabilities.json
+```
+
+## Limitaciones conocidas
+
+- La validación HTTP intenta reducir falsos positivos en SPAs/fallbacks, pero sigue siendo heurística.
+- Nmap es opcional y puede aumentar el tiempo total del escaneo.
+- La herramienta no explota vulnerabilidades: detecta, correlaciona y reporta.
+
+## Recomendación de uso
+
+- Usa `normal` para auditorías rápidas.
+- Usa `deep` para pruebas más completas.
+- Activa `--use-nmap` cuando quieras complementar AppSec con superficie de red.
+- Revisa especialmente los hallazgos con `needs_manual_validation` y las secciones de `discovery`.
+
+
+## Novedades v9.2
+
+- Se separan los **servicios y puertos descubiertos** de las vulnerabilidades web y de la superficie protegida.
+- La priorización de Nmap es más útil: 80/443 quedan como descubrimiento estándar de bajo impacto, mientras que bases de datos, brokers, acceso remoto y superficies administrativas ganan más peso.
+- Los informes Markdown agregados y por target muestran ahora una sección específica para descubrimiento de red.
+
+
+## Novedades v9.3
+
+- Títulos de Nmap más profesionales (por ejemplo, `Exposed MariaDB Service`).
+- Ajuste semántico del informe para separar mejor hallazgos confirmados web de servicios de red descubiertos.
+- Priorización algo más alta para middleware Erlang/RabbitMQ cuando aparece EPMD expuesto.
+
+
+## Novedades v9.4
+
+- Re-categorización de EPMD/RabbitMQ como `message-broker`.
+- Prioridad reducida para servicios web estándar en `80/443`.
+- Mayor confianza para endpoints protegidos descubiertos mediante `401/403`.
+- Mejora semántica en el informe detallado para separar mejor hallazgos web/app de descubrimiento de red.
+
+
+## Novedades v9.5.3
+
+- Reducción de falsos positivos en paneles administrativos que redirigen a login.
+- `/admin` o `/dashboard` que terminan en una pantalla de autenticación ya no se reportan como acceso sin autenticación.
+- Esas superficies se degradan a hallazgos de descubrimiento de bajo impacto cuando aplica.
+
+
+## Perfiles Scrapling en v10.4
+
+- `passive-stealth.yml`: usa `requests` para todo el discovery.
+- `passive-extended.yml`: usa `requests` en validadores y `scrapling` con `scrapling_mode: fetcher` en el crawler. No necesita navegador.
+- `active-aggressive.yml`: usa `requests` en validadores y `scrapling` con `scrapling_mode: dynamic` en el crawler. Requiere instalar navegadores de Playwright con `python -m playwright install`.
+
+## Instalación recomendada
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
+
+Para el perfil activo dinámico:
+
+```bash
+python -m playwright install
+```
+
+
+## Cambios relevantes en la v10.11
+
+- Se corrige el adapter de Scrapling para leer primero los atributos documentados por Scrapling (`status`, `headers`, `body`, `encoding`) en vez de asumir una interfaz estilo `requests`.
+- Las cabeceras HTTP se normalizan de forma case-insensitive y se expone siempre `Content-Type` cuando está presente aunque Scrapling lo entregue en minúsculas.
+- El debug HTTP del backend Scrapling ahora registra `body_length` a partir de `content`, evitando falsos `0` cuando el texto no se había reconstruido aún.
+- Se añaden tests de regresión para el caso observado en `http://localhost:8080/login.php`, donde antes el crawler hacía `skip_non_document` con `content_type: ""`.
+- Limitación conocida: el error `curl: (52) Empty reply from server` en algunos targets locales del fetcher sigue siendo un problema de transporte del backend HTTP; la v10.9 corrige el mapper y la pérdida de contenido, no ese fallo de red concreto.
+
+
+### Novedades de la 10.10
+
+- fallback automático del crawler de `scrapling` a `requests` cuando falla el transporte del fetcher (`curl: (52)` y similares).
+- análisis de documentos descubiertos para extraer formularios, acciones, rutas candidatas y pistas API en HTML/JS.
+- promoción de candidatos descubiertos a validaciones de paneles, autenticación y superficies API.
+- nuevos hallazgos de discovery para formularios de login, formularios de subida y pistas de endpoints API embebidas.
+- métricas extra en `debug_counts`: `crawl_candidate_paths`, `crawl_forms` y `crawl_js_hints`.
+
+### Novedades de la 10.11
+
+- mejora del parser de atributos HTML para soportar formularios con atributos sin comillas, frecuente en aplicaciones PHP clásicas como DVWA.
+- la detección de formularios de autenticación ahora también usa heurísticas por nombres de campos y ruta, no sólo `type=password`.
+- el crawler prioriza enlaces de valor alto (`login`, `admin`, `api`, `graphql`, `swagger`, `*.js`) y evita seguir imágenes y otros estáticos de poco valor salvo que se pida expresamente.
+- el parser de Nmap descarta fingerprints genéricos de `network-service` que contradicen un target HTTP explícito en el mismo puerto, reduciendo falsos positivos como `Exposed PPP Service` en `http://localhost:3000`.
+- nuevos tests de regresión para DVWA y para la limpieza del falso positivo de Nmap.
+
+
+## Perfiles operativos v10.12
+
+### 1. `passive-stealth`
+Pensado para observación de muy bajo ruido.
+
+- No ejecuta Nuclei ni Nmap.
+- No lanza probes de baseline `__attack_surface_mapper_not_found__`.
+- No prueba rutas inventadas como `.env`, `.git/HEAD`, `swagger`, `metrics` o `graphql`.
+- Solo navega el target inicial, redirects naturales y recursos observados en la respuesta.
+- Usa `User-Agent` de navegador.
+
+Ejemplo:
+
+```bash
+python main.py --config config/profiles/passive-stealth.yml --debug
+```
+
+### 2. `passive-recon`
+Reconocimiento GET-only, con enumeración visible pero sin payloads ni explotación.
+
+- Puede probar rutas comunes.
+- Puede descubrir superficies API, Swagger, GraphQL, metrics y ficheros sensibles.
+- Mantiene modo HTTP `passive`.
+
+Ejemplo:
+
+```bash
+python main.py --config passive-recon.yml --debug
+```
+
+### 3. `active`
+Perfil agresivo para máxima cobertura.
+
+- Habilita crawling dinámico.
+- Ejecuta Nuclei completo.
+- Ejecuta Nmap.
+- Acepta mayor huella en logs.
+
+Ejemplo:
+
+```bash
+python main.py --config active-aggressive.yml --debug
+```
+
+
+## 10.12.1
+
+- Corrige el cableado de perfiles para claves nuevas de configuración (`user_agent`, `run_nuclei`, `baseline_probe`, `observed_only`) evitando fallos de `argparse.Namespace` cuando solo se definen en YAML.
+- `passive-stealth.yml` vuelve a ejecutar el flujo observado-only sin lanzar probes inventados ni Nuclei/Nmap.
+
+
+## Novedades v10.13
+
+- Fingerprinting HTTP ligero para detectar tecnologías probables a partir de headers y contenido (por ejemplo Apache, PHP, Express, Spring Boot, Angular o WordPress).
+- Correlación más útil para superficie API: los hallazgos repetitivos de endpoints se agrupan en resúmenes como `Multiple API Endpoints Exposed (N)` o `Multiple API Hints Discovered In Client-Side Content (N)`.
+- Priorización algo mejor cuando se detecta exposición de múltiples endpoints de API en el mismo target.
+- Menos ruido en el reporting agregado y por target, manteniendo el detalle en la evidencia resumida.
+
+
+## Novedades v10.13.1
+
+- Reduce las peticiones duplicadas del perfil `passive-stealth` reutilizando la misma respuesta base para validaciones de cabeceras y fingerprinting.
+- En `observed_only`, desactiva crawling y extracción de secretos para que el perfil stealth se limite a una navegación base por target.
+
+## Novedades v10.20
+
+- Refactorización orientada a pipeline con etapas explícitas (`NucleiStage`, `NmapStage`, `PassiveValidationStage`, `CorrelationStage`, `ReportingStage`).
+- Introducción de `ScanContext` como modelo compartido entre etapas.
+- Nueva familia de módulos `collectors/` para separar Nuclei, Nmap, backends HTTP y crawling de la lógica de validación y reporting.
+- `orchestrator.py` pasa a actuar como fachada de compatibilidad sobre el nuevo pipeline.
+- Documentación adicional en `docs/PIPELINE.md`.
+
+
+## v10.21
+
+- Pipeline manifest por ejecución.
+- Normalización consistente de `asset_host`.
+- Clasificación adicional de findings con `kind`.
+- Evidencia resumida más limpia.
+
+
+## v10.22.1 hotfix
+
+- Corrige el error `name 'urlparse' is not defined` en la fase de validación pasiva.
+- Sustituye User-Agents internos del proyecto por valores genéricos para reducir exposición del nombre de la herramienta en logs de aplicación.
+- Endurece `browser_discovery` para no abortar toda la fase cuando el colector falla; el fallo queda reflejado en debug y el run puede continuar.
+- Mantiene el flujo de recon/active sin dejar el manifiesto vacío por un error puntual del stage.
+
+
+
+## v10.22.2
+
+Cambios principales:
+- separación explícita de perfiles `passive-recon-safe` y `passive-recon-enum`
+- `passive-recon.yml` queda como alias de compatibilidad para `passive-recon-enum`
+- los perfiles de recon pasan a usar `requests` por defecto para evitar el ruido y la inestabilidad de Scrapling fetcher contra Juice Shop
+- fallback automático del crawler a `requests` tras errores repetidos de transporte en Scrapling
+- `Scrapling` fetcher deja de inyectar cabeceras stealth automáticas como `Referer` artificial
+- throttling ligero en modo pasivo para evitar ráfagas demasiado obvias en logs
+- el pipeline reduce el probing hardcoded cuando el perfil funciona en `observed_only`
+
+### Perfiles recomendados
+- `config/profiles/passive-stealth.yml`: navegación mínima y muy discreta
+- `config/profiles/passive-recon-safe.yml`: crawling seguro con hints de JS, sin enumeración de rutas sensibles
+- `config/profiles/passive-recon-enum.yml`: enumeración GET-only visible pero todavía no agresiva
+- `config/profiles/active-aggressive.yml`: máxima cobertura
+
+
+## v10.22.4 polish
+
+- `passive-recon-safe` mantiene la navegación realista y evita inflar `observed_urls` con referencias API extraídas de JS.
+- Las pistas descubiertas en cliente pasan a llamarse `Client-Side API Reference Observed` para reflejar que son observación pasiva, no probing activo.
+- Se limpia el inventario observado separando mejor URLs navegadas de referencias API vistas en código cliente.
+
+
+## v10.22.5
+- reutiliza la primera respuesta HTML del browser discovery como base para validaciones pasivas en `passive-recon-safe`.
+- reduce la doble petición visible al root/login en perfiles `observed_only`.

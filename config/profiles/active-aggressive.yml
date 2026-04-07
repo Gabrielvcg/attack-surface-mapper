@@ -1,0 +1,39 @@
+profile: active
+
+targets:
+  - http://localhost:3000
+  - http://localhost:8080
+
+http:
+  backend: requests
+  mode: active
+  headers:
+    User-Agent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
+
+crawler:
+  enabled: true
+  max_depth: 4
+  max_pages: 50
+  dynamic: true
+  include_js: true
+  backend: scrapling
+  scrapling_mode: dynamic
+
+validators:
+  baseline_probe: true
+  observed_only: false
+  panels: true
+  auth: true
+  api: true
+  sensitive_files: true
+  secrets: true
+
+nuclei:
+  enabled: true
+  templates: full
+
+nmap:
+  enabled: true
+
+# v10.21 semantics
+# Highest coverage profile: enables deeper validation and infrastructure collectors.

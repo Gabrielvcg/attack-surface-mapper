@@ -1,0 +1,27 @@
+profile: quick
+workers: 3
+
+targets:
+  - http://example.com
+
+nuclei:
+  severity: medium,high,critical
+  rate_limit: 50
+  timeout: 10
+  retries: 1
+
+nmap:
+  enabled: false
+
+modules:
+  headers: true
+  panels: false
+  tls: false
+  crawl: false
+  secrets: false
+  auth: true
+  api: false
+  sensitive_files: false
+
+reports:
+  formats: md

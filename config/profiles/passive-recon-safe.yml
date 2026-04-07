@@ -1,0 +1,36 @@
+profile: passive-recon-safe
+
+targets:
+  - http://localhost:3000
+  - http://localhost:8080
+
+http:
+  backend: requests
+  mode: passive
+  headers:
+    User-Agent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
+
+crawler:
+  enabled: true
+  max_depth: 2
+  max_pages: 20
+  include_js: true
+  backend: requests
+
+validators:
+  baseline_probe: false
+  observed_only: true
+  panels: false
+  auth: false
+  api: false
+  sensitive_files: false
+  secrets: false
+
+nuclei:
+  enabled: false
+
+nmap:
+  enabled: false
+
+# v10.22.2 semantics
+# Safe passive recon: navigation, assets and JS hints only. No hardcoded endpoint probing.
