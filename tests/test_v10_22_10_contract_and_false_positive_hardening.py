@@ -60,7 +60,13 @@ def test_summary_payload_exposes_stable_schema_and_comparison_counts() -> None:
     }
     assert payload['stats']['priority_counts'] == {'critical': 0, 'high': 1, 'medium': 0, 'low': 0}
     assert payload['stats']['severity_counts']['info'] == 0
+    assert payload['stats']['application_findings'] == 1
+    assert payload['stats']['hygiene_findings'] == 0
+    assert payload['stats']['discovery_findings'] == 0
     assert payload['top_finding_count'] == 1
+    assert payload['top_risk_finding_count'] == 1
+    assert payload['top_hygiene_finding_count'] == 0
+    assert payload['top_discovery_finding_count'] == 0
 
 
 def test_aggregate_payload_exposes_stable_summary_and_finding_fields() -> None:

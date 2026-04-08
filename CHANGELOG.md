@@ -26,6 +26,7 @@
 
 - Acota mejor la prioridad de documentaciÃ³n y superficies API: `Swagger UI Exposed` deja de escalar a `critical`, `GraphQL Endpoint Accessible Without Authentication` se mantiene en `medium` cuando sigue en `likely`, y el inventario `Multiple API Endpoints Exposed` no compite como si fuese una confirmaciÃ³n de impacto.
 - Ajusta la matriz de revisiÃ³n para que headers de higiene y superficies de inventario API queden en `revisar` o `descubrimiento`, evitando priorizar por defecto hallazgos que todavÃ­a son de contexto o endurecimiento.
+- Separa mejor el reporting entre riesgo de aplicaciÃ³n, higiene/endurecimiento y descubrimiento: `report.summary.json` expone listas dedicadas (`top_risk_findings`, `top_hygiene_findings`, `top_discovery_findings`) y el markdown mueve headers/TLS a una secciÃ³n propia para que no compitan visualmente con acceso indebido real.
 
 ## v10.22.6 false-positive tuning
 
