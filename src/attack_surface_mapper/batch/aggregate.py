@@ -32,14 +32,42 @@ def _is_ipv4(value: str | None) -> bool:
 def _derive_target_asset_hosts(results: Iterable[ScanResult]) -> dict[str, str | None]:
     mapping: dict[str, str | None] = {}
     for result in results:
-        ips = sorted({v.host for v in result.vulnerabilities if _is_ipv4(v.host)})
+        ips = sorted({
+            v.asset_host_resolved
+            for v in result.vulnerabilities
+            if _is_ipv4(v.asset_host_resolved)
+        } | {
+            v.host
+            for v in result.vulnerabilities
+            if _is_ipv4(v.host)
+        })
         mapping[result.target] = ips[0] if len(ips) == 1 else None
     return mapping
 
 
+def _display_asset_host(result_target: str, vuln, target_asset_hosts: dict[str, str | None]) -> str:
+    if vuln.asset_host:
+        return str(vuln.asset_host).lower()
+    if vuln.target_host_original:
+        return str(vuln.target_host_original).lower()
+    if vuln.host:
+        return str(vuln.host).lower()
+    location = str(vuln.matched_at or vuln.target or '')
+    if '://' in location:
+        from urllib.parse import urlparse
+        parsed = urlparse(location)
+        if parsed.hostname:
+            return str(parsed.hostname).lower()
+    return target_asset_hosts.get(result_target) or str(location).lower()
+
+
 def _canonical_asset_host(result_target: str, vuln, target_asset_hosts: dict[str, str | None]) -> str:
+    if _is_ipv4(vuln.asset_host_resolved):
+        return str(vuln.asset_host_resolved)
     if _is_ipv4(vuln.host):
         return str(vuln.host)
+    if vuln.asset_host:
+        return str(vuln.asset_host).lower()
     resolved = target_asset_hosts.get(result_target)
     if resolved:
         return resolved
@@ -71,6 +99,7 @@ def _aggregate_key(result_target: str, vuln, target_asset_hosts: dict[str, str |
 
 def _build_finding_record(result_target: str, vuln, target_asset_hosts: dict[str, str | None]) -> dict:
     canonical_host = _canonical_asset_host(result_target, vuln, target_asset_hosts)
+    display_host = _display_asset_host(result_target, vuln, target_asset_hosts)
     location = vuln.matched_at or vuln.target
     if (vuln.category or '').lower() in NETWORK_DISCOVERY_CATEGORIES and canonical_host and vuln.port:
         location = f'{canonical_host}:{vuln.port}'
@@ -78,15 +107,19 @@ def _build_finding_record(result_target: str, vuln, target_asset_hosts: dict[str
         'target': result_target,
         'location': location,
         'title': vuln.title,
+        'finding_id': vuln.finding_id,
+        'correlation_id': vuln.correlation_id,
         'priority': vuln.priority,
         'severity': vuln.severity,
         'category': vuln.category,
         'verification_status': vuln.verification_status,
         'recommendation': vuln.recommendation,
         'targets': [result_target],
-        'asset_host': canonical_host,
-        'asset_port': vuln.port,
-        'asset_hosts': [canonical_host] if canonical_host else [],
+        'target_host_original': vuln.target_host_original,
+        'asset_host': display_host,
+        'asset_host_resolved': canonical_host if _is_ipv4(canonical_host) else vuln.asset_host_resolved,
+        'asset_port': vuln.asset_port or vuln.port,
+        'asset_hosts': [display_host] if display_host else [],
         'scope': 'target-specific',
     }
 
@@ -112,7 +145,7 @@ def build_aggregate_payload(results: Iterable[ScanResult]) -> dict:
             record = aggregated_findings[key]
             if result.target not in record['targets']:
                 record['targets'].append(result.target)
-            host = _canonical_asset_host(result.target, vuln, target_asset_hosts)
+            host = _display_asset_host(result.target, vuln, target_asset_hosts)
             if host and host not in record['asset_hosts']:
                 record['asset_hosts'].append(host)
             prior_priority = record.get('priority')
@@ -120,12 +153,18 @@ def build_aggregate_payload(results: Iterable[ScanResult]) -> dict:
             record['severity'] = _best_severity(record.get('severity'), vuln.severity)
             candidate_score = _PRIORITY_ORDER.get((vuln.priority or '').lower(), 0)
             record_score = _PRIORITY_ORDER.get((prior_priority or '').lower(), 0)
-            if candidate_score >= record_score:
+            if candidate_score > record_score or not prior_priority:
                 record['verification_status'] = vuln.verification_status
                 record['recommendation'] = vuln.recommendation
-                # Prefer more descriptive titles when merging the same asset view.
-                if len(vuln.title or '') > len(record.get('title') or ''):
-                    record['title'] = vuln.title
+                record['finding_id'] = vuln.finding_id
+                record['correlation_id'] = vuln.correlation_id
+                record['target_host_original'] = vuln.target_host_original
+                record['asset_host'] = _display_asset_host(result.target, vuln, target_asset_hosts)
+                record['asset_host_resolved'] = _canonical_asset_host(result.target, vuln, target_asset_hosts)
+                record['asset_port'] = vuln.asset_port or vuln.port
+            # Prefer more descriptive titles even when the priority is tied.
+            if len(vuln.title or '') > len(record.get('title') or ''):
+                record['title'] = vuln.title
 
         per_target.append({
             'target': result.target,
@@ -239,15 +278,19 @@ def write_aggregate_reports(results: Iterable[ScanResult], output_dir: str) -> d
     csv_path = output / 'aggregate_findings.csv'
     with csv_path.open('w', encoding='utf-8', newline='') as handle:
         writer = csv.writer(handle)
-        writer.writerow(['scope', 'targets', 'target_count', 'location', 'asset_host', 'asset_port', 'title', 'priority', 'severity', 'category', 'verification_status', 'recommendation'])
+        writer.writerow(['scope', 'targets', 'target_count', 'location', 'target_host_original', 'asset_host', 'asset_host_resolved', 'asset_port', 'finding_id', 'correlation_id', 'title', 'priority', 'severity', 'category', 'verification_status', 'recommendation'])
         for finding in payload['top_findings']:
             writer.writerow([
                 finding.get('scope', ''),
                 finding.get('target_labels', ''),
                 finding.get('target_count', 1),
                 finding.get('location', ''),
+                finding.get('target_host_original', ''),
                 finding.get('asset_host', ''),
+                finding.get('asset_host_resolved', ''),
                 finding.get('asset_port', ''),
+                finding.get('finding_id', ''),
+                finding.get('correlation_id', ''),
                 finding['title'],
                 finding['priority'],
                 finding['severity'],

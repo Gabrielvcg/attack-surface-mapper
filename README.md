@@ -259,7 +259,7 @@ config/examples/
 
 Important note:
 
-> If a target is passed via CLI, it **overrides** the target defined inside the YAML profile.
+> If a target is passed via CLI, it is added to the targets defined inside the YAML profile and the final list is deduplicated.
 
 This is useful because the tutor can execute the same profile against another target without modifying the YAML.
 
@@ -399,7 +399,7 @@ python main.py --targets-file targets.txt --profile passive-recon-safe
 python main.py --config config/examples/config.example.yml
 ```
 
-### Override YAML target from CLI
+### Add a CLI target to YAML/profile targets
 
 ```bash
 python main.py --profile passive-recon-safe https://proba-despregamento.onrender.com/
@@ -433,6 +433,23 @@ Then compare:
 
 This is one of the most important values of the project:
 **the ability to control the trade-off between stealth, coverage and signal quality**.
+
+### Repeatable local validation
+
+For quick regression checks of the passive profiles, a local Juice Shop container is a practical baseline:
+
+```bash
+docker run -d --rm --name asm-juice -p 3000:3000 bkimminich/juice-shop
+python main.py --profile passive-stealth http://localhost:3000
+python main.py --profile passive-recon-safe http://localhost:3000
+docker stop asm-juice
+```
+
+When comparing both runs, start with:
+
+- `run_manifest.json`
+- `reports/aggregate_summary.json`
+- `targets/.../reports/report.summary.json`
 
 ---
 
@@ -552,8 +569,8 @@ If someone wants to understand the project quickly, the best order is:
 - Passive profiles do **not** require Playwright browsers.
 - Active dynamic mode may require `python -m playwright install`.
 - Nmap is optional.
-- CLI target input overrides YAML target configuration.
-- The active YAML profile file is called `active-aggressive.yml`, while the CLI profile accepted by `main.py` is commonly used as `active`.
+- CLI target input is combined with YAML targets and deduplicated.
+- The active YAML profile file is called `active-aggressive.yml`; the CLI accepts both `active` and `active-aggressive`.
 
 ---
 

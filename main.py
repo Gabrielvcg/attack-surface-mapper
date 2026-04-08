@@ -41,7 +41,7 @@ def split_csv(value: str | None) -> tuple[str, ...] | None:
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description='v9: Nuclei + validaciones propias + correlación + reporting + descubrimiento opcional con Nmap.')
+    parser = argparse.ArgumentParser(description='Attack Surface Mapper: pipeline de Nuclei, Nmap opcional, validaciones propias, correlación y reporting.')
     parser.add_argument('target', nargs='?', default=None, help='Target único a escanear, por ejemplo https://example.com')
     parser.add_argument('--targets-file', default=None, help='Fichero con un target por línea')
     parser.add_argument('--config', default=None, help='Fichero YAML con configuración del escaneo')

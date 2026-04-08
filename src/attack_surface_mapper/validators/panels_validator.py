@@ -19,7 +19,7 @@ class PanelsValidator(BaseValidator):
         '/metrics',
     )
 
-    def __init__(self, timeout: int = 5, paths: tuple[str, ...] | None = None, *, backend: str = 'auto', mode: str = 'passive', user_agent: str = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36', use_baseline_probe: bool = True) -> None:
+    def __init__(self, timeout: int = 5, paths: tuple[str, ...] | None = None, *, backend: str = 'requests', mode: str = 'passive', user_agent: str = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36', use_baseline_probe: bool = True) -> None:
         self.timeout = timeout
         self.paths = paths or self.DEFAULT_PATHS
         self.backend = backend
@@ -27,11 +27,11 @@ class PanelsValidator(BaseValidator):
         self.user_agent = user_agent
         self.use_baseline_probe = use_baseline_probe
 
-    def run(self, target: str) -> list[Vulnerability]:
+    def run(self, target: str, baseline=None) -> list[Vulnerability]:
         vulnerabilities: list[Vulnerability] = []
         parsed = urlparse(target)
         with build_http_session(backend=self.backend, mode=self.mode, timeout=self.timeout, user_agent=self.user_agent) as session:
-            baseline = baseline_fingerprint(session, target, self.timeout) if self.use_baseline_probe else None
+            baseline = baseline if baseline is not None else (baseline_fingerprint(session, target, self.timeout) if self.use_baseline_probe else None)
             for path in self.paths:
                 url = urljoin(target.rstrip('/') + '/', path.lstrip('/'))
                 try:
@@ -60,7 +60,7 @@ class PanelsValidator(BaseValidator):
                         evidence=f'Status {response.status_code} en {final_url}; validación={reason}',
                         cwe=['CWE-200'],
                         tags=self._tags_for(path),
-                        template_id=f'custom-panel-{path.strip('/') or "root"}',
+                        template_id=f"custom-panel-{path.strip('/') or 'root'}",
                         matched_at=final_url,
                         host=parsed.hostname,
                         port=str(parsed.port) if parsed.port else None,

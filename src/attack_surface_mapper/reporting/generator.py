@@ -38,6 +38,7 @@ class ReportStats:
     unique_cves: list[str]
     unique_cwes: list[str]
     needs_manual_validation: int
+    confirmed_high_or_critical: int
 
 
 class ReportGenerator:
@@ -83,6 +84,12 @@ class ReportGenerator:
                 for v in vulns
                 if v.needs_manual_validation or (v.verification_status or '').lower() in {'likely', 'needs_manual_validation'}
             ),
+            confirmed_high_or_critical=sum(
+                1
+                for v in vulns
+                if (v.verification_status or '').lower() == 'confirmed'
+                and (v.priority or v.severity or '').lower() in {'critical', 'high'}
+            ),
         )
 
     @staticmethod
@@ -91,11 +98,18 @@ class ReportGenerator:
             return 'No se detectaron hallazgos durante la ejecución actual.'
         priorities = ', '.join(f'{count} {name}' for name, count in stats.priority_counts.items())
         severities = ', '.join(f'{count} {name}' for name, count in stats.severity_counts.items())
+        high_or_critical = stats.priority_counts.get('critical', 0) + stats.priority_counts.get('high', 0)
+        if stats.confirmed_high_or_critical:
+            impact_note = f'Se observaron {stats.confirmed_high_or_critical} hallazgos confirmados de prioridad alta o crítica.'
+        elif high_or_critical:
+            impact_note = 'No se observaron hallazgos confirmados de prioridad alta o crítica; los hallazgos de mayor prioridad requieren revisión manual.'
+        else:
+            impact_note = 'No se observaron hallazgos de prioridad alta o crítica en esta ejecución.'
         return (
             f'Se identificaron {stats.total_findings} hallazgos correlacionados. '
             f'Prioridades: {priorities}. Severidades: {severities}. '
             f'Hallazgos que requieren validación manual: {stats.needs_manual_validation}. '
-            'No se observaron vulnerabilidades críticas confirmadas en esta ejecución, pero la superficie expuesta descubierta requiere revisión.'
+            f'{impact_note}'
         )
 
     @staticmethod
@@ -121,7 +135,17 @@ class ReportGenerator:
                     'priority': v.priority,
                     'severity': v.severity,
                     'category': v.category,
+                    'finding_id': v.finding_id,
+                    'correlation_id': v.correlation_id,
+                    'kind': v.kind,
+                    'confidence': v.confidence,
                     'verification_status': v.verification_status,
+                    'source_count': v.source_count,
+                    'target_host_original': v.target_host_original,
+                    'asset_host': v.asset_host,
+                    'asset_host_resolved': v.asset_host_resolved,
+                    'asset_port': v.asset_port,
+                    'evidence_summary': v.evidence_summary,
                     'recommendation': v.recommendation,
                 }
                 for v in sorted_vulns[:10]
@@ -142,13 +166,13 @@ class ReportGenerator:
         with file_path.open('w', encoding='utf-8', newline='') as handle:
             writer = csv.writer(handle)
             writer.writerow([
-                'source', 'severity', 'priority', 'priority_reason', 'category', 'confidence', 'verification_status', 'title', 'target', 'description',
+                'finding_id', 'correlation_id', 'source', 'severity', 'priority', 'priority_reason', 'category', 'kind', 'confidence', 'verification_status', 'title', 'target', 'target_host_original', 'asset_host', 'asset_host_resolved', 'asset_port', 'description',
                 'evidence_summary', 'cve', 'cwe', 'cvss_score', 'source_count', 'related_sources', 'recommendation'
             ])
             for vuln in sorted_vulns:
                 writer.writerow([
-                    vuln.source, vuln.severity, vuln.priority or '', vuln.priority_reason or '', vuln.category or '', vuln.confidence or '', vuln.verification_status or '',
-                    vuln.title, vuln.target, vuln.description, vuln.evidence_summary or '',
+                    vuln.finding_id or '', vuln.correlation_id or '', vuln.source, vuln.severity, vuln.priority or '', vuln.priority_reason or '', vuln.category or '', vuln.kind or '', vuln.confidence or '', vuln.verification_status or '',
+                    vuln.title, vuln.target, vuln.target_host_original or '', vuln.asset_host or '', vuln.asset_host_resolved or '', vuln.asset_port or '', vuln.description, vuln.evidence_summary or '',
                     ', '.join(vuln.cve), ', '.join(vuln.cwe), vuln.cvss_score if vuln.cvss_score is not None else '',
                     vuln.source_count, ', '.join(vuln.related_sources), vuln.recommendation or ''
                 ])
