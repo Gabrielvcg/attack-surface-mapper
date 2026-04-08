@@ -28,6 +28,7 @@
 - Ajusta la matriz de revisiÃ³n para que headers de higiene y superficies de inventario API queden en `revisar` o `descubrimiento`, evitando priorizar por defecto hallazgos que todavÃ­a son de contexto o endurecimiento.
 - Separa mejor el reporting entre riesgo de aplicaciÃ³n, higiene/endurecimiento y descubrimiento: `report.summary.json` expone listas dedicadas (`top_risk_findings`, `top_hygiene_findings`, `top_discovery_findings`) y el markdown mueve headers/TLS a una secciÃ³n propia para que no compitan visualmente con acceso indebido real.
 - Ajusta `AuthValidator` para que rutas de superficie API como `/graphql`, `/swagger` o `/api-docs` no se expresen por defecto como fallo de autorizaciÃ³n: ahora se reportan como `api` (`GraphQL Surface Exposed`, `Swagger UI Exposed`, etc.) y se acotan a `likely/medium` salvo evidencia mÃ¡s fuerte.
+- Filtra `top_risk_findings` para dejar fuera señales de baja prioridad como CORS amplio `likely` cuando ya existen hallazgos medios/altos mÃ¡s accionables, manteniendo el summary centrado en lo que primero merece revisiÃ³n.
 
 ## v10.22.6 false-positive tuning
 
