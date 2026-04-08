@@ -254,3 +254,57 @@ def test_confirmed_medium_header_does_not_escalate_to_high_priority_by_default()
     enrich_vulnerabilities([vuln])
 
     assert vuln.priority == 'medium'
+
+
+def test_confirmed_swagger_documentation_does_not_escalate_to_critical_priority() -> None:
+    vuln = Vulnerability(
+        source='custom-api-check',
+        title='Swagger UI Exposed',
+        description='d',
+        severity='medium',
+        target='https://target.example/swagger',
+        category='api',
+        confidence='high',
+        verification_status='confirmed',
+    )
+
+    enrich_vulnerabilities([vuln])
+
+    assert vuln.priority == 'high'
+
+
+def test_likely_graphql_without_auth_stays_below_high_priority() -> None:
+    vuln = Vulnerability(
+        source='custom-auth-check',
+        title='GraphQL Endpoint Accessible Without Authentication',
+        description='d',
+        severity='medium',
+        target='https://target.example/graphql',
+        category='authentication',
+        confidence='medium',
+        verification_status='likely',
+        needs_manual_validation=True,
+    )
+
+    enrich_vulnerabilities([vuln])
+
+    assert vuln.priority == 'medium'
+
+
+def test_multiple_api_endpoints_inventory_priority_stays_medium() -> None:
+    vuln = Vulnerability(
+        source='custom-api-check',
+        title='Multiple API Endpoints Exposed (10)',
+        description='d',
+        severity='medium',
+        target='https://target.example/api',
+        category='api',
+        confidence='high',
+        verification_status='likely',
+        source_count=10,
+        needs_manual_validation=True,
+    )
+
+    enrich_vulnerabilities([vuln])
+
+    assert vuln.priority == 'medium'

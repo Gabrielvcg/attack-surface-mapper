@@ -12,6 +12,8 @@ def test_review_bucket_prefers_discovery_and_confirmed_validation() -> None:
     assert review_bucket_for_finding({'kind': 'validation', 'verification_status': 'confirmed', 'confidence': 'high', 'priority': 'high'}) == 'priorizar'
     assert review_bucket_for_finding({'kind': 'validation', 'verification_status': 'confirmed', 'confidence': 'high', 'priority': 'low'}) == 'revisar'
     assert review_bucket_for_finding({'kind': 'validation', 'verification_status': 'likely', 'confidence': 'medium'}) == 'revisar'
+    assert review_bucket_for_finding({'kind': 'validation', 'category': 'headers', 'verification_status': 'confirmed', 'confidence': 'high', 'priority': 'medium'}) == 'revisar'
+    assert review_bucket_for_finding({'kind': 'validation', 'category': 'api', 'title': 'Multiple API Endpoints Exposed (10)', 'verification_status': 'likely', 'confidence': 'medium', 'priority': 'medium'}) == 'descubrimiento'
 
 
 def test_build_review_rows_reads_run_manifest_and_vulnerabilities(tmp_path: Path) -> None:

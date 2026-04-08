@@ -24,6 +24,9 @@
 - Endurece `APIValidator`, `PanelsValidator` y `SensitiveFilesValidator` contra superficies de login servidas desde rutas de docs, respuestas HTML que simulan ficheros y respuestas GraphQL demasiado dÃ©biles o indistinguibles del fallback.
 - Reordena `top_findings` y el agregado para que hallazgos confirmados de aplicaciÃ³n queden por delante de inventario, fingerprints y headers higiÃ©nicos cuando comparten prioridad similar.
 
+- Acota mejor la prioridad de documentaciÃ³n y superficies API: `Swagger UI Exposed` deja de escalar a `critical`, `GraphQL Endpoint Accessible Without Authentication` se mantiene en `medium` cuando sigue en `likely`, y el inventario `Multiple API Endpoints Exposed` no compite como si fuese una confirmaciÃ³n de impacto.
+- Ajusta la matriz de revisiÃ³n para que headers de higiene y superficies de inventario API queden en `revisar` o `descubrimiento`, evitando priorizar por defecto hallazgos que todavÃ­a son de contexto o endurecimiento.
+
 ## v10.22.6 false-positive tuning
 
 - Alinea `--profile passive-stealth`, `--profile passive-recon-safe` y `--profile active-aggressive` con la semántica de los YAML para evitar que la CLI ejecute Nuclei, Nmap o probes hardcoded cuando no toca.
