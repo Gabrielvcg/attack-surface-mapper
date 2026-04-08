@@ -43,15 +43,20 @@ def test_summary_payload_exposes_stable_schema_and_comparison_counts() -> None:
     payload = ReportGenerator().build_summary_payload([vuln], 'https://target.example', comparison={'new_findings': [{'title': 'x'}]})
 
     assert payload['schema_version'] == '1.0'
-    assert payload['comparison'] == {
-        'new_findings': [{'title': 'x'}],
-        'resolved_findings': [],
-        'changed_findings': [],
-    }
+    assert payload['comparison']['new_findings'] == [{'title': 'x'}]
+    assert payload['comparison']['resolved_findings'] == []
+    assert payload['comparison']['changed_findings'] == []
+    assert payload['comparison']['promoted_findings'] == []
+    assert payload['comparison']['regressed_findings'] == []
     assert payload['comparison_summary'] == {
         'new_findings': 1,
         'resolved_findings': 0,
         'changed_findings': 0,
+        'promoted_findings': 0,
+        'regressed_findings': 0,
+        'updated_findings': 0,
+        'unchanged_findings': 0,
+        'change_type_counts': {},
     }
     assert payload['stats']['priority_counts'] == {'critical': 0, 'high': 1, 'medium': 0, 'low': 0}
     assert payload['stats']['severity_counts']['info'] == 0

@@ -107,7 +107,7 @@ def compute_priority(vulnerability: Vulnerability) -> tuple[str, str]:
     if any(token in target for token in ('/metrics', '/actuator', '/swagger', '/openapi', '/graphql')) and 'localhost' not in target:
         score += 1
         reasons.append('exposición remota fuera de localhost')
-    if verification in {'heuristic', 'needs_manual_validation'}:
+    if verification in {'likely', 'heuristic', 'needs_manual_validation'}:
         score -= 1
         reasons.append(f'validación={verification}')
     if confidence == 'low':
@@ -150,6 +150,34 @@ def compute_confidence(vulnerability: Vulnerability) -> str:
     return 'low'
 
 
+def _normalise_validation_state(vulnerability: Vulnerability) -> None:
+    verification = (vulnerability.verification_status or '').lower()
+    confidence = (vulnerability.confidence or '').lower()
+    category = (vulnerability.category or '').lower()
+
+    if verification == 'confirmed':
+        vulnerability.needs_manual_validation = False
+        if confidence == 'low':
+            vulnerability.confidence = 'medium'
+            confidence = 'medium'
+    elif verification in {'likely', 'needs_manual_validation', 'heuristic'}:
+        vulnerability.needs_manual_validation = True
+
+    if category in {'authentication', 'api', 'secret'} and verification != 'confirmed':
+        vulnerability.needs_manual_validation = True
+
+    if confidence in {'low', 'medium'} and category in {'authentication', 'api', 'panel-exposure', 'sensitive-file'} and verification != 'confirmed':
+        vulnerability.needs_manual_validation = True
+
+    if not vulnerability.verification_status:
+        if vulnerability.confidence == 'high' and not vulnerability.needs_manual_validation:
+            vulnerability.verification_status = 'confirmed'
+        elif vulnerability.needs_manual_validation:
+            vulnerability.verification_status = 'needs_manual_validation'
+        else:
+            vulnerability.verification_status = 'likely'
+
+
 def compute_recommendation(vulnerability: Vulnerability) -> str:
     if vulnerability.title.startswith('Technology Fingerprint Detected'):
         return 'Usar el fingerprint como contexto para priorizar rutas, hardening y validaciones específicas del stack detectado.'
@@ -183,15 +211,40 @@ def _stable_identifier(namespace: str, *parts: object) -> str:
     return hashlib.sha1(raw.encode('utf-8')).hexdigest()
 
 
+def _normalise_validation_state(vulnerability: Vulnerability) -> None:
+    verification = (vulnerability.verification_status or '').lower()
+    confidence = (vulnerability.confidence or '').lower()
+    category = (vulnerability.category or '').lower()
+
+    if verification == 'confirmed':
+        vulnerability.needs_manual_validation = False
+        if confidence == 'low':
+            vulnerability.confidence = 'medium'
+            confidence = 'medium'
+    elif verification in {'likely', 'needs_manual_validation', 'heuristic'}:
+        vulnerability.needs_manual_validation = True
+
+    if category in {'authentication', 'api', 'secret'} and verification != 'confirmed':
+        vulnerability.needs_manual_validation = True
+
+    if confidence in {'low', 'medium'} and category in {'authentication', 'api', 'panel-exposure', 'sensitive-file'} and verification != 'confirmed':
+        vulnerability.needs_manual_validation = True
+
+    if not vulnerability.verification_status:
+        if vulnerability.confidence == 'high' and not vulnerability.needs_manual_validation:
+            vulnerability.verification_status = 'confirmed'
+        elif vulnerability.needs_manual_validation:
+            vulnerability.verification_status = 'needs_manual_validation'
+        else:
+            vulnerability.verification_status = 'likely'
+
+
 def enrich_vulnerabilities(vulnerabilities: list[Vulnerability]) -> list[Vulnerability]:
     for vulnerability in vulnerabilities:
         vulnerability.confidence = compute_confidence(vulnerability)
         if vulnerability.category == 'discovery' and (vulnerability.verification_status or '').lower() == 'confirmed':
             vulnerability.confidence = 'high'
-        if vulnerability.category in {'authentication', 'api', 'secret'}:
-            vulnerability.needs_manual_validation = True
-        if (vulnerability.verification_status or '').lower() in {'likely', 'needs_manual_validation'}:
-            vulnerability.needs_manual_validation = True
+        _normalise_validation_state(vulnerability)
         vulnerability.priority, vulnerability.priority_reason = compute_priority(vulnerability)
         vulnerability.recommendation = vulnerability.recommendation or compute_recommendation(vulnerability)
         vulnerability.evidence_summary = clean_evidence(vulnerability.evidence_summary or build_evidence_summary(vulnerability))
@@ -208,15 +261,7 @@ def enrich_vulnerabilities(vulnerabilities: list[Vulnerability]) -> list[Vulnera
             vulnerability.asset_host_resolved = str(vulnerability.host).lower()
         if vulnerability.port and not vulnerability.asset_port:
             vulnerability.asset_port = vulnerability.port
-        if vulnerability.confidence in {'low', 'medium'} and vulnerability.category in {'authentication', 'api', 'panel-exposure', 'sensitive-file'}:
-            vulnerability.needs_manual_validation = True
-        if not vulnerability.verification_status:
-            if vulnerability.confidence == 'high' and not vulnerability.needs_manual_validation:
-                vulnerability.verification_status = 'confirmed'
-            elif vulnerability.needs_manual_validation:
-                vulnerability.verification_status = 'needs_manual_validation'
-            else:
-                vulnerability.verification_status = 'likely'
+        _normalise_validation_state(vulnerability)
         vulnerability.finding_id = _stable_identifier(
             'finding',
             *(vulnerability.dedup_key()),
