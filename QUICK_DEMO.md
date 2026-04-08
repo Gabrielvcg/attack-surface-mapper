@@ -141,3 +141,9 @@ Useful files to compare between both runs:
 - `run_manifest.json`
 - `reports/aggregate_summary.json`
 - `targets/<target>/reports/report.summary.json`
+
+On Windows/PowerShell, the same flow can be repeated with:
+
+```powershell
+.\scripts\validate_labs.ps1 -Labs juice-shop
+```
