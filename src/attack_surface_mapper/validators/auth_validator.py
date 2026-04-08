@@ -33,7 +33,7 @@ class AuthValidator(BaseValidator):
         '/admin/login',
     )
 
-    def __init__(self, timeout: int = 6, paths: tuple[str, ...] | None = None, *, backend: str = 'auto', mode: str = 'passive', user_agent: str = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36', use_baseline_probe: bool = True, observed_only: bool = False) -> None:
+    def __init__(self, timeout: int = 6, paths: tuple[str, ...] | None = None, *, backend: str = 'requests', mode: str = 'passive', user_agent: str = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36', use_baseline_probe: bool = True, observed_only: bool = False) -> None:
         self.timeout = timeout
         self.paths = paths or self.DEFAULT_PROTECTED_PATHS
         self.backend = backend
@@ -42,7 +42,7 @@ class AuthValidator(BaseValidator):
         self.use_baseline_probe = use_baseline_probe
         self.observed_only = observed_only
 
-    def run(self, target: str) -> list[Vulnerability]:
+    def run(self, target: str, baseline=None) -> list[Vulnerability]:
         findings: list[Vulnerability] = []
         parsed_target = urlparse(target)
         with build_http_session(backend=self.backend, mode=self.mode, timeout=self.timeout, user_agent=self.user_agent) as session:
@@ -52,7 +52,7 @@ class AuthValidator(BaseValidator):
             host = final_parsed.hostname or parsed_target.hostname
             port = str(final_parsed.port) if final_parsed.port else (str(parsed_target.port) if parsed_target.port else None)
             scheme = final_parsed.scheme or parsed_target.scheme
-            baseline = baseline_fingerprint(session, target, self.timeout) if self.use_baseline_probe else None
+            baseline = baseline if baseline is not None else (baseline_fingerprint(session, target, self.timeout) if self.use_baseline_probe else None)
 
             findings.extend(self._check_cookie_flags(response, final_url, host, port, scheme))
             if not self.observed_only:

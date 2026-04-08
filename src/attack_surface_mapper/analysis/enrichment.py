@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+
 from attack_surface_mapper.models.vulnerability import Vulnerability
 from attack_surface_mapper.utils.asset_normalizer import normalize_asset
 
@@ -176,6 +178,11 @@ def build_evidence_summary(vulnerability: Vulnerability) -> str | None:
     return compact
 
 
+def _stable_identifier(namespace: str, *parts: object) -> str:
+    raw = '|'.join('' if part is None else str(part).strip().lower() for part in (namespace, *parts))
+    return hashlib.sha1(raw.encode('utf-8')).hexdigest()
+
+
 def enrich_vulnerabilities(vulnerabilities: list[Vulnerability]) -> list[Vulnerability]:
     for vulnerability in vulnerabilities:
         vulnerability.confidence = compute_confidence(vulnerability)
@@ -193,9 +200,12 @@ def enrich_vulnerabilities(vulnerabilities: list[Vulnerability]) -> list[Vulnera
         asset = normalize_asset(vulnerability.target or vulnerability.matched_at or '')
         vulnerability.target_host_original = asset.get('target_host_original')
         vulnerability.asset_host = asset.get('asset_host')
+        vulnerability.asset_host_resolved = asset.get('asset_host_resolved')
         vulnerability.asset_port = asset.get('asset_port')
         if vulnerability.host and not vulnerability.asset_host:
-            vulnerability.asset_host = vulnerability.host
+            vulnerability.asset_host = str(vulnerability.host).lower()
+        if vulnerability.host and not vulnerability.asset_host_resolved and str(vulnerability.host).lower() != str(vulnerability.asset_host or '').lower():
+            vulnerability.asset_host_resolved = str(vulnerability.host).lower()
         if vulnerability.port and not vulnerability.asset_port:
             vulnerability.asset_port = vulnerability.port
         if vulnerability.confidence in {'low', 'medium'} and vulnerability.category in {'authentication', 'api', 'panel-exposure', 'sensitive-file'}:
@@ -207,4 +217,16 @@ def enrich_vulnerabilities(vulnerabilities: list[Vulnerability]) -> list[Vulnera
                 vulnerability.verification_status = 'needs_manual_validation'
             else:
                 vulnerability.verification_status = 'likely'
+        vulnerability.finding_id = _stable_identifier(
+            'finding',
+            *(vulnerability.dedup_key()),
+            vulnerability.asset_host,
+            vulnerability.asset_port,
+        )
+        vulnerability.correlation_id = _stable_identifier(
+            'correlation',
+            *(vulnerability.correlation_key()),
+            vulnerability.asset_host,
+            vulnerability.asset_port,
+        )
     return vulnerabilities

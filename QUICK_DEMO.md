@@ -65,7 +65,7 @@ python main.py --targets-file targets.txt --profile passive-recon-safe
 
 ## 5. Important notes
 
-- Passing a target via CLI overrides YAML profiles
+- Passing a target via CLI adds it to YAML/profile targets and deduplicates the final list
 - Profiles are located in: `config/profiles/`
 - Passive modes do NOT require Playwright
 - Active mode may require Playwright
@@ -122,3 +122,22 @@ When testing the tool, compare:
 Key idea:
 
 **stealth vs coverage vs signal quality**
+
+---
+
+## 8. Repeatable local lab
+
+Juice Shop is a good low-friction target for checking that passive profiles stay aligned with their intended noise level:
+
+```bash
+docker run -d --rm --name asm-juice -p 3000:3000 bkimminich/juice-shop
+python main.py --profile passive-stealth http://localhost:3000
+python main.py --profile passive-recon-safe http://localhost:3000
+docker stop asm-juice
+```
+
+Useful files to compare between both runs:
+
+- `run_manifest.json`
+- `reports/aggregate_summary.json`
+- `targets/<target>/reports/report.summary.json`

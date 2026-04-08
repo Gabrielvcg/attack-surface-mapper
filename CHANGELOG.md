@@ -1,4 +1,15 @@
-# attack_surface_mapper_project_v10.11
+# attack_surface_mapper_project_v10.22
+
+## v10.22.8 polish
+
+- Conserva el `debug_http_trace` de browser discovery y validación pasiva en una misma ejecución para facilitar análisis de ruido y troubleshooting.
+- Ajusta el resumen ejecutivo para que la nota sobre hallazgos altos/críticos confirmados dependa de los datos reales del run.
+- Amplía el `summary-json` con campos ya existentes del modelo (`kind`, `confidence`, `asset_host`, `asset_port`, `source_count`, `evidence_summary`) para mantener el output más preparado para consumo estructurado futuro.
+- Alinea la documentación con el comportamiento real de targets CLI + YAML: se combinan y deduplican, no se sobrescriben.
+- Separa `asset_host` estable de `asset_host_resolved` para que los outputs humanos y estructurados no cambien de hostname a IP según el punto del pipeline.
+- Añade identificadores deterministas por hallazgo y correlación para facilitar ingest futura en sistemas de indexación.
+- Reutiliza una única baseline probe compartida entre validadores HTTP durante la validación pasiva, reduciendo requests redundantes.
+- Documenta una validación repetible con Juice Shop para contrastar perfiles pasivos.
 
 ## v10.22.6 false-positive tuning
 
@@ -135,7 +146,7 @@ python main.py --config config/examples/config.example.yml
 
 ### Generales
 
-- `--profile {quick,normal,deep,passive,active}`
+- `--profile {quick,normal,deep,passive,active,active-aggressive,passive-stealth,passive-recon-safe,passive-recon-enum}`
 - `--workers 4`
 - `--output-root scans`
 - `--run-name nombre_scan`

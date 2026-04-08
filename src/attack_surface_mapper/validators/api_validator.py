@@ -26,7 +26,7 @@ class APIValidator(BaseValidator):
         '/graphql/playground',
     )
 
-    def __init__(self, timeout: int = 6, paths: tuple[str, ...] | None = None, *, backend: str = 'auto', mode: str = 'passive', user_agent: str = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36', use_baseline_probe: bool = True, observed_only: bool = False) -> None:
+    def __init__(self, timeout: int = 6, paths: tuple[str, ...] | None = None, *, backend: str = 'requests', mode: str = 'passive', user_agent: str = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36', use_baseline_probe: bool = True, observed_only: bool = False) -> None:
         self.timeout = timeout
         self.paths = paths or self.DEFAULT_PATHS
         self.backend = backend
@@ -35,14 +35,14 @@ class APIValidator(BaseValidator):
         self.use_baseline_probe = use_baseline_probe
         self.observed_only = observed_only
 
-    def run(self, target: str) -> list[Vulnerability]:
+    def run(self, target: str, baseline=None) -> list[Vulnerability]:
         findings: list[Vulnerability] = []
         parsed_target = urlparse(target)
         host = parsed_target.hostname
         port = str(parsed_target.port) if parsed_target.port else None
         scheme = parsed_target.scheme
         with build_http_session(backend=self.backend, mode=self.mode, timeout=self.timeout, user_agent=self.user_agent) as session:
-            baseline = baseline_fingerprint(session, target, self.timeout) if self.use_baseline_probe else None
+            baseline = baseline if baseline is not None else (baseline_fingerprint(session, target, self.timeout) if self.use_baseline_probe else None)
             if not self.observed_only:
                 findings.extend(self._check_cors(session, target, host, port, scheme))
                 findings.extend(self._check_api_docs(session, target, host, port, scheme, baseline))
