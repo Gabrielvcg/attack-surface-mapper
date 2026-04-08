@@ -4,6 +4,7 @@ param(
     [string[]]$Profiles = @('passive-stealth', 'passive-recon-safe'),
     [switch]$IncludeEnum,
     [int]$MinFindings = 1,
+    [string]$ReviewMatrixOutput = 'reviews/lab_findings_review.csv',
     [switch]$KeepLabsRunning
 )
 
@@ -114,6 +115,33 @@ function Invoke-Scan {
     )
 }
 
+function Export-ReviewMatrix {
+    param(
+        [System.Collections.Generic.List[string]]$Runs,
+        [string]$OutputPath
+    )
+
+    if (-not $Runs -or $Runs.Count -eq 0) {
+        return
+    }
+
+    $runArgs = ($Runs | ForEach-Object { $_ -replace '\\', '/' }) -join ' '
+    $innerCommand = "pip install -q -r requirements.txt && python scripts/export_review_matrix.py $runArgs --output $OutputPath"
+    Invoke-Docker -Arguments @(
+        'run', '--rm',
+        '-v', "${workspace}:/workspace",
+        '-w', '/workspace',
+        $scannerImage,
+        'sh', '-lc', $innerCommand
+    )
+
+    $matrixPath = Join-Path $workspace ($OutputPath -replace '/', '\')
+    if (-not (Test-Path $matrixPath)) {
+        throw "No se generó la matriz de revisión esperada: $matrixPath"
+    }
+    Write-Host "Matriz de revisión exportada: $matrixPath" -ForegroundColor Green
+}
+
 function Assert-RequiredJsonProperty {
     param(
         $Object,
@@ -216,6 +244,8 @@ try {
         }
     }
 }
+
+Export-ReviewMatrix -Runs $executedRuns -OutputPath $ReviewMatrixOutput
 
 Write-Host ''
 Write-Host 'Validacion completada. Runs generados:' -ForegroundColor Green

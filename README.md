@@ -460,6 +460,8 @@ For a repeatable PowerShell flow on Windows:
 The script now validates the generated `run_manifest.json`, `aggregate_summary.json`
 and `report.summary.json`, and it accepts `-MinFindings` to require a minimum number
 of correlated findings per run.
+It also exports `reviews/lab_findings_review.csv` so you can label findings as
+`verdadero`, `falso` or `dudoso` during false-positive review.
 
 ---
 

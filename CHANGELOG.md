@@ -16,6 +16,8 @@
 - Reduce falsos positivos de `APIValidator` descartando pantallas de login servidas desde rutas como `/swagger` o `/graphql`.
 - Enriquece `comparison.json` y la secciÃ³n de comparativa en reportes con promociones, regresiones y cambios de confianza/verificaciÃ³n.
 - Alinea mejor `verification_status`, `needs_manual_validation` y prioridad para que un hallazgo `confirmed` no siga marcado como revisiÃ³n manual por inercia de categorÃ­a.
+- AÃ±ade una matriz de revisiÃ³n exportable (`reviews/lab_findings_review.csv`) para etiquetar hallazgos de labs como `verdadero`, `falso` o `dudoso` durante el afinado de falsos positivos.
+- Ajusta la priorizaciÃ³n de correlaciÃ³n para dar mÃ¡s peso a evidencia `confirmed` y evita que la mera multiplicidad de fuentes infle hallazgos todavÃ­a `likely`.
 
 ## v10.22.6 false-positive tuning
 
