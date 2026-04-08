@@ -137,6 +137,43 @@ def test_summary_top_findings_prioritise_application_risk_over_headers_and_inven
         'Multiple API Endpoints Exposed (10)',
         'Technology Fingerprint Detected (Angular)',
     ]
+    assert payload['top_risk_findings'][0]['title'] == 'GraphQL Surface Exposed'
+    assert payload['top_hygiene_findings'][0]['title'] == 'Missing Content-Security-Policy Header'
+    assert payload['top_discovery_findings'][0]['title'] == 'Technology Fingerprint Detected (Angular)'
+
+
+def test_markdown_has_dedicated_hygiene_section(tmp_path) -> None:
+    findings = [
+        Vulnerability(
+            source='custom-api-check',
+            title='GraphQL Surface Exposed',
+            description='d',
+            severity='high',
+            priority='high',
+            target='https://target.example/graphql',
+            category='api',
+            confidence='high',
+            verification_status='confirmed',
+        ),
+        Vulnerability(
+            source='custom-header-check',
+            title='Missing Content-Security-Policy Header',
+            description='d',
+            severity='medium',
+            priority='medium',
+            target='https://target.example/',
+            category='headers',
+            confidence='high',
+            verification_status='confirmed',
+        ),
+    ]
+
+    content_path = ReportGenerator().generate_markdown(findings, 'https://target.example', str(tmp_path / 'report.md'))
+    content = open(content_path, encoding='utf-8').read()
+
+    assert '## Hallazgos confirmados de aplicación' in content
+    assert '## Hallazgos de higiene y endurecimiento' in content
+    assert 'Missing Content-Security-Policy Header' in content
 
 
 def test_aggregate_top_findings_prioritise_application_risk_over_headers_and_inventory() -> None:
