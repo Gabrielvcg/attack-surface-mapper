@@ -21,6 +21,8 @@
 
 - Permite validar `passive-recon-enum` dentro del flujo repetible de labs con un override local (`config/examples/lab-passive-recon-enum.yml`) que desactiva Nuclei y mantiene el perfil comparable en Docker.
 - Evita que headers confirmados de severidad media, como CSP ausente, escalen a prioridad `high` solo por estar confirmados; la prioridad se reserva mejor para evidencia aplicativa o impacto mÃ¡s claro.
+- Endurece `APIValidator`, `PanelsValidator` y `SensitiveFilesValidator` contra superficies de login servidas desde rutas de docs, respuestas HTML que simulan ficheros y respuestas GraphQL demasiado dÃ©biles o indistinguibles del fallback.
+- Reordena `top_findings` y el agregado para que hallazgos confirmados de aplicaciÃ³n queden por delante de inventario, fingerprints y headers higiÃ©nicos cuando comparten prioridad similar.
 
 ## v10.22.6 false-positive tuning
 

@@ -16,6 +16,27 @@ def _header_value(headers: dict[str, str], name: str) -> str:
     return ''
 
 
+def _graphql_signature_strength(preview: str) -> str:
+    strong_tokens = (
+        'graphql',
+        '__schema',
+        'graphiql',
+        'graphql-playground',
+        'apollo sandbox',
+        'must provide query string',
+    )
+    if any(token in preview for token in strong_tokens):
+        return 'strong'
+    weak_token_groups = (
+        ('errors', 'message'),
+        ('query', 'mutation'),
+        ('operationname', 'variables'),
+    )
+    if any(all(token in preview for token in group) for group in weak_token_groups):
+        return 'weak'
+    return ''
+
+
 class APIValidator(BaseValidator):
     DEFAULT_PATHS: tuple[str, ...] = (
         '/swagger',
@@ -145,6 +166,7 @@ class APIValidator(BaseValidator):
 
     def _classify_path(self, path: str, response, preview: str, content_type: str, baseline):
         baseline_like = looks_like_baseline(response, baseline)
+        graphql_signature = ''
         if looks_like_login_surface(response, preview):
             title = 'API Surface Exposed'
             description = 'Se ha detectado una superficie de API accesible pÃºblicamente.'
@@ -195,13 +217,23 @@ class APIValidator(BaseValidator):
             title = 'GraphQL Surface Exposed'
             description = 'Se ha detectado un endpoint o interfaz GraphQL accesible.'
             severity = 'high'
-            if any(token in preview for token in ('graphql', '__schema', 'query', 'mutation', 'errors', 'data')):
+            graphql_signature = _graphql_signature_strength(preview)
+            if graphql_signature == 'strong':
                 score += 3
-                reasons.append('marcadores graphql encontrados')
+                reasons.append('marcadores graphql fuertes encontrados')
+            elif graphql_signature == 'weak':
+                score += 2
+                reasons.append('marcadores graphql plausibles encontrados')
             if 'json' in content_type or 'html' in content_type:
                 score += 1
                 reasons.append('content-type compatible')
 
+        if path.startswith('/graphql') and not graphql_signature:
+            reasons.append('sin firma graphql suficiente')
+            return False, 'low', '; '.join(reasons), 'discarded', title, description, severity
+        if path.startswith('/graphql') and baseline_like and graphql_signature != 'strong':
+            reasons.append('respuesta similar al fallback sin firma graphql fuerte')
+            return False, 'low', '; '.join(reasons), 'discarded', title, description, severity
         if baseline_like and score < 4:
             return False, 'low', '; '.join(reasons), 'discarded', title, description, severity
         if score >= 6:
