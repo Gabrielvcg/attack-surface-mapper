@@ -36,6 +36,10 @@ $labDefinitions = @{
     }
 }
 
+$profileConfigOverrides = @{
+    'passive-recon-enum' = 'config/examples/lab-passive-recon-enum.yml'
+}
+
 function Invoke-Docker {
     param([string[]]$Arguments)
     Write-Host "docker $($Arguments -join ' ')" -ForegroundColor DarkGray
@@ -105,7 +109,11 @@ function Invoke-Scan {
         [string]$RunName
     )
 
-    $innerCommand = "pip install -q -r requirements.txt && python main.py --profile $Profile --run-name $RunName $Target"
+    $configArg = ''
+    if ($profileConfigOverrides.ContainsKey($Profile)) {
+        $configArg = "--config $($profileConfigOverrides[$Profile])"
+    }
+    $innerCommand = "pip install -q -r requirements.txt && python main.py $configArg --profile $Profile --run-name $RunName $Target"
     Invoke-Docker -Arguments @(
         'run', '--rm',
         '-v', "${workspace}:/workspace",

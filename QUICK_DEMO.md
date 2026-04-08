@@ -146,6 +146,7 @@ On Windows/PowerShell, the same flow can be repeated with:
 
 ```powershell
 .\scripts\validate_labs.ps1 -Labs juice-shop
+.\scripts\validate_labs.ps1 -Labs juice-shop -IncludeEnum
 ```
 
 The script also validates the generated manifest and summary artifacts. Use
@@ -153,3 +154,5 @@ The script also validates the generated manifest and summary artifacts. Use
 minimum number of correlated findings.
 After each run it exports `reviews/lab_findings_review.csv`, ready to annotate
 with `verdadero`, `falso` or `dudoso` during false-positive review.
+With `-IncludeEnum`, the script applies `config/examples/lab-passive-recon-enum.yml`
+so `passive-recon-enum` remains repeatable in Docker without a local Nuclei binary.

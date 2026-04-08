@@ -19,6 +19,9 @@
 - AÃ±ade una matriz de revisiÃ³n exportable (`reviews/lab_findings_review.csv`) para etiquetar hallazgos de labs como `verdadero`, `falso` o `dudoso` durante el afinado de falsos positivos.
 - Ajusta la priorizaciÃ³n de correlaciÃ³n para dar mÃ¡s peso a evidencia `confirmed` y evita que la mera multiplicidad de fuentes infle hallazgos todavÃ­a `likely`.
 
+- Permite validar `passive-recon-enum` dentro del flujo repetible de labs con un override local (`config/examples/lab-passive-recon-enum.yml`) que desactiva Nuclei y mantiene el perfil comparable en Docker.
+- Evita que headers confirmados de severidad media, como CSP ausente, escalen a prioridad `high` solo por estar confirmados; la prioridad se reserva mejor para evidencia aplicativa o impacto mÃ¡s claro.
+
 ## v10.22.6 false-positive tuning
 
 - Alinea `--profile passive-stealth`, `--profile passive-recon-safe` y `--profile active-aggressive` con la semántica de los YAML para evitar que la CLI ejecute Nuclei, Nmap o probes hardcoded cuando no toca.

@@ -98,7 +98,7 @@ def compute_priority(vulnerability: Vulnerability) -> tuple[str, str]:
     if vulnerability.cvss_score is not None and vulnerability.cvss_score >= 7:
         score += 1
         reasons.append(f'cvss elevado={vulnerability.cvss_score}')
-    if verification == 'confirmed':
+    if verification == 'confirmed' and category not in {'headers', 'discovery'} and (vulnerability.severity or '').lower() not in {'low', 'info'}:
         score += 1
         reasons.append('hallazgo confirmado')
     if vulnerability.source_count > 1 and verification == 'confirmed':
