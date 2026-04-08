@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from attack_surface_mapper.batch.aggregate import build_aggregate_payload
+from attack_surface_mapper.analysis.enrichment import enrich_vulnerabilities
 from attack_surface_mapper.models.vulnerability import Vulnerability
 from attack_surface_mapper.orchestrator import ScanResult
 from attack_surface_mapper.reporting import ReportGenerator, ReportPaths
@@ -44,6 +45,30 @@ def test_api_validator_discards_baseline_like_graphql_without_strong_signature()
     assert verification == 'discarded'
     assert title == 'GraphQL Surface Exposed'
     assert 'sin firma graphql fuerte' in reason
+
+
+def test_auth_validator_reports_graphql_as_api_surface_not_auth_failure(monkeypatch) -> None:
+    def fake_get(self, url, timeout=0, allow_redirects=True, headers=None):
+        if url == 'http://localhost:3000':
+            return FakeResponse(url, '<html>home</html>')
+        if '__attack_surface_mapper_not_found__' in url:
+            return FakeResponse(url, '<html><title>SPA</title>shell</html>')
+        if url.endswith('/graphql'):
+            return FakeResponse(url, '{"errors":[{"message":"must provide query string"}],"data":null}', headers={'Content-Type': 'application/json'})
+        return FakeResponse(url, '<html><title>SPA</title>shell</html>')
+
+    monkeypatch.setattr('requests.sessions.Session.get', fake_get)
+
+    from attack_surface_mapper.validators.auth_validator import AuthValidator
+
+    findings = AuthValidator(timeout=1, paths=('/graphql',)).run('http://localhost:3000')
+
+    assert len(findings) == 1
+    assert findings[0].title == 'GraphQL Surface Exposed'
+    assert findings[0].category == 'api'
+    assert findings[0].verification_status == 'likely'
+    enrich_vulnerabilities(findings)
+    assert findings[0].priority == 'medium'
 
 
 def test_panels_validator_skips_swagger_login_surface(monkeypatch) -> None:
