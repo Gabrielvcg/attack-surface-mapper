@@ -11,6 +11,8 @@ from attack_surface_mapper.orchestrator import ScanResult
 
 
 NETWORK_DISCOVERY_CATEGORIES = {'network-service', 'database', 'remote-access', 'message-broker', 'admin-surface', 'web-service', 'file-transfer', 'search-service'}
+PRIORITY_LABELS = ('critical', 'high', 'medium', 'low')
+SEVERITY_LABELS = ('critical', 'high', 'medium', 'low', 'info', 'unknown')
 _PRIORITY_ORDER = {'critical': 4, 'high': 3, 'medium': 2, 'low': 1}
 _IPV4_RE = re.compile(r'^(?:\d{1,3}\.){3}\d{1,3}$')
 
@@ -23,6 +25,10 @@ def _best_priority(current: str | None, candidate: str | None) -> str | None:
 
 def _best_severity(current: str | None, candidate: str | None) -> str | None:
     return _best_priority(current, candidate)
+
+
+def _stable_counts(counter: Counter, labels: tuple[str, ...]) -> dict[str, int]:
+    return {label: int(counter.get(label, 0)) for label in labels}
 
 
 def _is_ipv4(value: str | None) -> bool:
@@ -112,7 +118,11 @@ def _build_finding_record(result_target: str, vuln, target_asset_hosts: dict[str
         'priority': vuln.priority,
         'severity': vuln.severity,
         'category': vuln.category,
+        'kind': vuln.kind,
+        'confidence': vuln.confidence,
         'verification_status': vuln.verification_status,
+        'source_count': vuln.source_count,
+        'evidence_summary': vuln.evidence_summary,
         'recommendation': vuln.recommendation,
         'targets': [result_target],
         'target_host_original': vuln.target_host_original,
@@ -130,6 +140,7 @@ def build_aggregate_payload(results: Iterable[ScanResult]) -> dict:
     total_targets = len(result_list)
     raw_total_findings = sum(len(r.vulnerabilities) for r in result_list)
     priority_counter = Counter()
+    severity_counter = Counter()
     category_counter = Counter()
     per_target: list[dict] = []
     aggregated_findings: dict[tuple[str, str, str, str], dict] = {}
@@ -137,6 +148,7 @@ def build_aggregate_payload(results: Iterable[ScanResult]) -> dict:
     for result in result_list:
         for vuln in result.vulnerabilities:
             priority_counter[(vuln.priority or vuln.severity).lower()] += 1
+            severity_counter[(vuln.severity or 'unknown').lower()] += 1
             category_counter[(vuln.category or 'uncategorised').lower()] += 1
             key = _aggregate_key(result.target, vuln, target_asset_hosts)
             if key not in aggregated_findings:
@@ -158,6 +170,10 @@ def build_aggregate_payload(results: Iterable[ScanResult]) -> dict:
                 record['recommendation'] = vuln.recommendation
                 record['finding_id'] = vuln.finding_id
                 record['correlation_id'] = vuln.correlation_id
+                record['kind'] = vuln.kind
+                record['confidence'] = vuln.confidence
+                record['source_count'] = vuln.source_count
+                record['evidence_summary'] = vuln.evidence_summary
                 record['target_host_original'] = vuln.target_host_original
                 record['asset_host'] = _display_asset_host(result.target, vuln, target_asset_hosts)
                 record['asset_host_resolved'] = _canonical_asset_host(result.target, vuln, target_asset_hosts)
@@ -181,6 +197,7 @@ def build_aggregate_payload(results: Iterable[ScanResult]) -> dict:
     top_findings = list(aggregated_findings.values())
     for finding in top_findings:
         finding['targets'].sort()
+        finding['asset_hosts'].sort()
         finding['target_count'] = len(finding['targets'])
         finding['target_labels'] = ', '.join(finding['targets'])
         finding['asset_host_count'] = len([host for host in finding.get('asset_hosts', []) if host])
@@ -198,14 +215,25 @@ def build_aggregate_payload(results: Iterable[ScanResult]) -> dict:
         reverse=True,
     )
 
+    per_target.sort(key=lambda item: item['target'])
     shared_asset_findings = [f for f in top_findings if f.get('scope') == 'shared-host']
     target_specific_findings = [f for f in top_findings if f.get('scope') != 'shared-host']
     return {
+        'schema_version': '1.0',
+        'summary': {
+            'total_targets': total_targets,
+            'raw_total_findings': raw_total_findings,
+            'total_findings': len(top_findings),
+            'priority_counts': _stable_counts(priority_counter, PRIORITY_LABELS),
+            'severity_counts': _stable_counts(severity_counter, SEVERITY_LABELS),
+            'category_counts': dict(sorted(category_counter.items(), key=lambda item: (-item[1], item[0]))),
+        },
         'total_targets': total_targets,
         'raw_total_findings': raw_total_findings,
         'total_findings': len(top_findings),
-        'priority_counts': dict(priority_counter),
-        'category_counts': dict(category_counter),
+        'priority_counts': _stable_counts(priority_counter, PRIORITY_LABELS),
+        'severity_counts': _stable_counts(severity_counter, SEVERITY_LABELS),
+        'category_counts': dict(sorted(category_counter.items(), key=lambda item: (-item[1], item[0]))),
         'per_target': per_target,
         'shared_asset_findings': shared_asset_findings[:50],
         'target_specific_findings': target_specific_findings[:50],

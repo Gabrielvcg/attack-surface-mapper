@@ -220,6 +220,110 @@ def build_report_paths(base_dir: Path, formats: tuple[str, ...] | None, skip_rep
     }
 
 
+def build_effective_config(args: argparse.Namespace, config: dict[str, Any], workers: int) -> dict[str, Any]:
+    profile_name = str(get_setting(args, config, 'profile', 'normal') or 'normal').lower()
+    profile = PROFILE_DEFAULTS.get(profile_name, PROFILE_DEFAULTS['normal'])
+    report_formats = split_csv(get_setting(args, config, 'report_formats'))
+    http_mode = str(get_setting(args, config, 'http_mode', profile.get('http_mode', 'passive')) or profile.get('http_mode', 'passive')).lower()
+    crawl_include_js_default = bool(profile.get('crawl_include_js', False)) or http_mode == 'active'
+    return {
+        'profile': profile_name,
+        'workers': workers,
+        'report_formats': list(report_formats or ('md', 'html', 'csv', 'summary-json', 'comparison-json')),
+        'skip_reports': bool(get_setting(args, config, 'skip_reports', False) or args.skip_reports),
+        'compare_with_json': args.compare_with_json,
+        'debug': bool(args.debug),
+        'http_backend': str(get_setting(args, config, 'http_backend', profile.get('http_backend', 'auto')) or profile.get('http_backend', 'auto')).lower(),
+        'crawler_backend': str(get_setting(args, config, 'crawler_backend', profile.get('crawler_backend', profile.get('http_backend', 'auto'))) or profile.get('crawler_backend', profile.get('http_backend', 'auto'))).lower(),
+        'http_mode': http_mode,
+        'baseline_probe': bool(get_setting(args, config, 'baseline_probe', profile.get('baseline_probe', True))),
+        'observed_only': bool(get_setting(args, config, 'observed_only', profile.get('observed_only', False))),
+        'browser_discovery_enabled': bool(get_setting(args, config, 'browser_discovery_enabled', profile.get('browser_discovery_enabled', True))),
+        'run_nuclei': bool(get_setting(args, config, 'run_nuclei', profile.get('run_nuclei', True))),
+        'run_nmap': bool(get_setting(args, config, 'use_nmap', profile.get('run_nmap', False)) or args.use_nmap),
+        'validator_timeout': safe_int(get_setting(args, config, 'validator_timeout', profile['validator_timeout']), int(profile['validator_timeout'])),
+        'crawl_max_pages': safe_int(get_setting(args, config, 'crawl_max_pages', profile['crawl_max_pages']), int(profile['crawl_max_pages'])),
+        'crawl_max_depth': safe_int(get_setting(args, config, 'crawl_max_depth', profile['crawl_max_depth']), int(profile['crawl_max_depth'])),
+        'crawl_include_js': bool(get_setting(args, config, 'crawl_include_js', crawl_include_js_default) or args.crawl_include_js or http_mode == 'active'),
+    }
+
+
+def build_run_manifest(
+    *,
+    base_dir: Path,
+    requested_targets: list[str],
+    aggregate_paths: dict[str, str],
+    results: list[ScanResult],
+    errors: list[str],
+    effective_config: dict[str, Any],
+) -> dict[str, Any]:
+    ordered_results = sorted(results, key=lambda item: item.target)
+    successful_targets = len(ordered_results)
+    total_findings = sum(len(result.vulnerabilities) for result in ordered_results)
+    raw_findings = sum(result.raw_findings_count for result in ordered_results)
+    observed_urls_total = sum(len(result.observed_urls or []) for result in ordered_results)
+    observed_api_calls_total = sum(len(result.observed_api_calls or []) for result in ordered_results)
+    observed_actions_total = sum(len(result.observed_actions or []) for result in ordered_results)
+
+    return {
+        'schema_version': '1.0',
+        'run_dir': str(base_dir),
+        'requested_targets': requested_targets,
+        'targets': [result.target for result in ordered_results],
+        'aggregate_reports': aggregate_paths,
+        'errors': errors,
+        'profile': str(effective_config.get('profile', '') or ''),
+        'effective_config': effective_config,
+        'pipeline': {
+            'stages': sorted({stage for result in ordered_results for stage in getattr(result, 'stages_executed', [])}),
+            'collectors': sorted({collector for result in ordered_results for collector in getattr(result, 'collectors_used', [])}),
+        },
+        'results_summary': {
+            'requested_targets': len(requested_targets),
+            'successful_targets': successful_targets,
+            'error_count': len(errors),
+            'raw_findings_count': raw_findings,
+            'correlated_findings_count': total_findings,
+            'observed_urls_count': observed_urls_total,
+            'observed_actions_count': observed_actions_total,
+            'observed_api_calls_count': observed_api_calls_total,
+        },
+        'per_target': [
+            {
+                'target': result.target,
+                'status': 'ok',
+                'stages': getattr(result, 'stages_executed', []),
+                'collectors': getattr(result, 'collectors_used', []),
+                'summary': {
+                    'raw_findings_count': result.raw_findings_count,
+                    'correlated_findings_count': len(result.vulnerabilities),
+                    'priorities': result.summary,
+                },
+                'observed': {
+                    'urls': getattr(result, 'observed_urls', []),
+                    'urls_count': len(getattr(result, 'observed_urls', []) or []),
+                    'actions_count': len(getattr(result, 'observed_actions', []) or []),
+                    'api_calls': getattr(result, 'observed_api_calls', []),
+                    'api_calls_count': len(getattr(result, 'observed_api_calls', []) or []),
+                },
+                'reports': {
+                    'markdown': result.report_paths.markdown,
+                    'html': result.report_paths.html,
+                    'csv': result.report_paths.csv,
+                    'summary_json': result.report_paths.summary_json,
+                    'comparison_json': result.report_paths.comparison_json,
+                },
+                'observed_urls': getattr(result, 'observed_urls', []),
+                'observed_actions_count': len(getattr(result, 'observed_actions', []) or []),
+                'observed_api_calls': getattr(result, 'observed_api_calls', []),
+                'raw_findings_count': result.raw_findings_count,
+                'findings': len(result.vulnerabilities),
+            }
+            for result in ordered_results
+        ],
+    }
+
+
 
 
 def build_target_paths(targets_dir: Path, target: str) -> dict[str, Path]:
@@ -339,6 +443,7 @@ def main() -> int:
     workers = safe_int(get_setting(args, config, 'workers', 1), 1)
     run_name = args.run_name or config.get('run_name')
     base_dir, targets_dir, reports_dir = build_run_paths(args.output_root, run_name)
+    effective_config = build_effective_config(args, config, workers)
 
     results: list[ScanResult] = []
     errors: list[str] = []
@@ -375,30 +480,14 @@ def main() -> int:
                 errors.append(f'{target}: {exc}')
 
     aggregate_paths = write_aggregate_reports(results, str(reports_dir)) if results else {}
-    manifest = {
-        'run_dir': str(base_dir),
-        'targets': [r.target for r in results],
-        'aggregate_reports': aggregate_paths,
-        'errors': errors,
-        'profile': str(get_setting(args, config, 'profile', '') or ''),
-        'pipeline': {
-            'stages': sorted({stage for r in results for stage in getattr(r, 'stages_executed', [])}),
-            'collectors': sorted({collector for r in results for collector in getattr(r, 'collectors_used', [])}),
-        },
-        'per_target': [
-            {
-                'target': r.target,
-                'stages': getattr(r, 'stages_executed', []),
-                'collectors': getattr(r, 'collectors_used', []),
-                'observed_urls': getattr(r, 'observed_urls', []),
-                'observed_actions_count': len(getattr(r, 'observed_actions', []) or []),
-                'observed_api_calls': getattr(r, 'observed_api_calls', []),
-                'raw_findings_count': r.raw_findings_count,
-                'findings': len(r.vulnerabilities),
-            }
-            for r in results
-        ],
-    }
+    manifest = build_run_manifest(
+        base_dir=base_dir,
+        requested_targets=targets,
+        aggregate_paths=aggregate_paths,
+        results=results,
+        errors=errors,
+        effective_config=effective_config,
+    )
     (base_dir / 'run_manifest.json').write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding='utf-8')
 
     print(f'Run dir: {base_dir}')

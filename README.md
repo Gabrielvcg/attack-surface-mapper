@@ -457,6 +457,10 @@ For a repeatable PowerShell flow on Windows:
 .\scripts\validate_labs.ps1 -Labs juice-shop
 ```
 
+The script now validates the generated `run_manifest.json`, `aggregate_summary.json`
+and `report.summary.json`, and it accepts `-MinFindings` to require a minimum number
+of correlated findings per run.
+
 ---
 
 ## Output Structure

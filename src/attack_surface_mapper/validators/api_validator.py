@@ -5,7 +5,7 @@ from urllib.parse import urljoin, urlparse
 from attack_surface_mapper.http_client import RequestError, build_http_session
 from attack_surface_mapper.models.vulnerability import Vulnerability
 from attack_surface_mapper.validators.base import BaseValidator
-from attack_surface_mapper.validators.http_fingerprint import baseline_fingerprint, looks_like_baseline, normalise_text
+from attack_surface_mapper.validators.http_fingerprint import baseline_fingerprint, looks_like_baseline, looks_like_login_surface, normalise_text
 
 
 def _header_value(headers: dict[str, str], name: str) -> str:
@@ -145,6 +145,19 @@ class APIValidator(BaseValidator):
 
     def _classify_path(self, path: str, response, preview: str, content_type: str, baseline):
         baseline_like = looks_like_baseline(response, baseline)
+        if looks_like_login_surface(response, preview):
+            title = 'API Surface Exposed'
+            description = 'Se ha detectado una superficie de API accesible pÃºblicamente.'
+            if path in {'/swagger', '/swagger-ui', '/api-docs'}:
+                title = 'Swagger UI Exposed'
+                description = 'Se ha detectado una interfaz de documentaciÃ³n Swagger accesible sin restricciones claras.'
+            elif path == '/openapi.json':
+                title = 'OpenAPI Specification Exposed'
+                description = 'Se ha detectado un documento OpenAPI/Swagger accesible pÃºblicamente.'
+            elif path.startswith('/graphql'):
+                title = 'GraphQL Surface Exposed'
+                description = 'Se ha detectado un endpoint o interfaz GraphQL accesible.'
+            return False, 'low', 'respuesta parece una superficie de login pÃºblica', 'discarded', title, description, 'medium'
         score = 0
         reasons: list[str] = []
         if response.status_code in (200, 201, 202, 204):

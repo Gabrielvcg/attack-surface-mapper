@@ -13,10 +13,24 @@ from attack_surface_mapper.models.vulnerability import Vulnerability
 
 SEVERITY_LABELS = ['critical', 'high', 'medium', 'low', 'info', 'unknown']
 PRIORITY_LABELS = ['critical', 'high', 'medium', 'low']
+COMPARISON_KEYS = ('new_findings', 'resolved_findings', 'changed_findings')
 
 
 
 NETWORK_DISCOVERY_CATEGORIES = {'network-service', 'database', 'remote-access', 'message-broker', 'admin-surface', 'web-service', 'file-transfer', 'search-service'}
+
+
+def _stable_counts(counter: Counter, labels: list[str]) -> dict[str, int]:
+    return {label: int(counter.get(label, 0)) for label in labels}
+
+
+def _nonzero_count_items(counts: dict[str, int]) -> list[tuple[str, int]]:
+    return [(name, count) for name, count in counts.items() if count > 0]
+
+
+def _normalise_comparison(comparison: dict | None) -> dict[str, list[dict]]:
+    payload = comparison or {}
+    return {key: list(payload.get(key, []) or []) for key in COMPARISON_KEYS}
 
 @dataclass(slots=True)
 class ReportPaths:
@@ -72,8 +86,8 @@ class ReportGenerator:
         unique_cwes = sorted({item for v in vulns for item in v.cwe if item})
         return ReportStats(
             total_findings=len(vulns),
-            severity_counts={label: severity_counter[label] for label in SEVERITY_LABELS if severity_counter.get(label, 0) > 0},
-            priority_counts={label: priority_counter[label] for label in PRIORITY_LABELS if priority_counter.get(label, 0) > 0},
+            severity_counts=_stable_counts(severity_counter, SEVERITY_LABELS),
+            priority_counts=_stable_counts(priority_counter, PRIORITY_LABELS),
             category_counts=dict(sorted(category_counter.items(), key=lambda item: (-item[1], item[0]))),
             source_counts=dict(sorted(source_counter.items(), key=lambda item: (-item[1], item[0]))),
             average_cvss=round(mean(cvss_values), 2) if cvss_values else None,
@@ -96,8 +110,8 @@ class ReportGenerator:
     def executive_summary(stats: ReportStats) -> str:
         if stats.total_findings == 0:
             return 'No se detectaron hallazgos durante la ejecución actual.'
-        priorities = ', '.join(f'{count} {name}' for name, count in stats.priority_counts.items())
-        severities = ', '.join(f'{count} {name}' for name, count in stats.severity_counts.items())
+        priorities = ', '.join(f'{count} {name}' for name, count in _nonzero_count_items(stats.priority_counts)) or 'sin prioridades clasificadas'
+        severities = ', '.join(f'{count} {name}' for name, count in _nonzero_count_items(stats.severity_counts)) or 'sin severidades clasificadas'
         high_or_critical = stats.priority_counts.get('critical', 0) + stats.priority_counts.get('high', 0)
         if stats.confirmed_high_or_critical:
             impact_note = f'Se observaron {stats.confirmed_high_or_critical} hallazgos confirmados de prioridad alta o crítica.'
@@ -119,37 +133,42 @@ class ReportGenerator:
         file_path.write_text(content, encoding='utf-8')
         return str(file_path)
 
+    @staticmethod
+    def _serialize_top_finding(vulnerability: Vulnerability) -> dict:
+        return {
+            'title': vulnerability.title,
+            'target': vulnerability.target,
+            'priority': vulnerability.priority,
+            'severity': vulnerability.severity,
+            'category': vulnerability.category,
+            'finding_id': vulnerability.finding_id,
+            'correlation_id': vulnerability.correlation_id,
+            'kind': vulnerability.kind,
+            'confidence': vulnerability.confidence,
+            'verification_status': vulnerability.verification_status,
+            'source_count': vulnerability.source_count,
+            'target_host_original': vulnerability.target_host_original,
+            'asset_host': vulnerability.asset_host,
+            'asset_host_resolved': vulnerability.asset_host_resolved,
+            'asset_port': vulnerability.asset_port,
+            'evidence_summary': vulnerability.evidence_summary,
+            'recommendation': vulnerability.recommendation,
+        }
+
     def build_summary_payload(self, vulnerabilities: Iterable[Vulnerability], target: str, comparison: dict | None = None) -> dict:
         sorted_vulns = self.sort_vulnerabilities(vulnerabilities)
         stats = self.compute_stats(sorted_vulns)
+        comparison_payload = _normalise_comparison(comparison)
         return {
+            'schema_version': '1.0',
             'title': self.title,
             'target': target,
             'executive_summary': self.executive_summary(stats),
             'stats': asdict(stats),
-            'comparison': comparison or {},
-            'top_findings': [
-                {
-                    'title': v.title,
-                    'target': v.target,
-                    'priority': v.priority,
-                    'severity': v.severity,
-                    'category': v.category,
-                    'finding_id': v.finding_id,
-                    'correlation_id': v.correlation_id,
-                    'kind': v.kind,
-                    'confidence': v.confidence,
-                    'verification_status': v.verification_status,
-                    'source_count': v.source_count,
-                    'target_host_original': v.target_host_original,
-                    'asset_host': v.asset_host,
-                    'asset_host_resolved': v.asset_host_resolved,
-                    'asset_port': v.asset_port,
-                    'evidence_summary': v.evidence_summary,
-                    'recommendation': v.recommendation,
-                }
-                for v in sorted_vulns[:10]
-            ],
+            'comparison': comparison_payload,
+            'comparison_summary': {key: len(comparison_payload[key]) for key in COMPARISON_KEYS},
+            'top_finding_count': min(len(sorted_vulns), 10),
+            'top_findings': [self._serialize_top_finding(v) for v in sorted_vulns[:10]],
         }
 
     def generate_summary_json(self, vulnerabilities: Iterable[Vulnerability], target: str, output_path: str, comparison: dict | None = None) -> str:
@@ -157,7 +176,7 @@ class ReportGenerator:
         return self._write(output_path, json.dumps(payload, indent=2, ensure_ascii=False))
 
     def generate_comparison_json(self, comparison: dict, output_path: str) -> str:
-        return self._write(output_path, json.dumps(comparison, indent=2, ensure_ascii=False))
+        return self._write(output_path, json.dumps(_normalise_comparison(comparison), indent=2, ensure_ascii=False))
 
     def generate_csv(self, vulnerabilities: Iterable[Vulnerability], output_path: str) -> str:
         file_path = Path(output_path)
@@ -224,10 +243,10 @@ class ReportGenerator:
             '## Prioridades',
             '',
         ]
-        for name, count in stats.priority_counts.items():
+        for name, count in _nonzero_count_items(stats.priority_counts):
             lines.append(f'- **{name}**: {count}')
         lines += ['', '## Severidades', '']
-        for name, count in stats.severity_counts.items():
+        for name, count in _nonzero_count_items(stats.severity_counts):
             lines.append(f'- **{name}**: {count}')
         lines += ['', '## Categorías', '']
         for name, count in stats.category_counts.items():
@@ -304,7 +323,7 @@ code {{ background: #f4f4f4; padding: 0.1rem 0.3rem; }}
 <p><strong>Target:</strong> <code>{html.escape(target)}</code></p>
 <p>{html.escape(self.executive_summary(stats))}</p>
 <section><h2>Resumen</h2>
-<ul>{''.join(f'<li>{html.escape(k)}: {v}</li>' for k, v in stats.priority_counts.items())}</ul>
+<ul>{''.join(f'<li>{html.escape(k)}: {v}</li>' for k, v in _nonzero_count_items(stats.priority_counts))}</ul>
 </section>
 {comparison_html}
 <section><h2>Hallazgos</h2>{''.join(findings) if findings else '<p>Sin hallazgos.</p>'}</section>
