@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from attack_surface_mapper.analysis.correlation import correlate_vulnerabilities
 from attack_surface_mapper.analysis.comparison import compare_scans
 from attack_surface_mapper.analysis.enrichment import enrich_vulnerabilities
 from attack_surface_mapper.models.vulnerability import Vulnerability
@@ -168,3 +169,71 @@ def test_likely_application_findings_still_require_manual_validation() -> None:
 
     assert vuln.needs_manual_validation is True
     assert vuln.priority in {'low', 'medium', 'high'}
+
+
+def test_correlation_prefers_confirmed_primary_over_likely_nuclei_match() -> None:
+    items = [
+        Vulnerability(
+            source='nuclei',
+            title='GraphQL Surface Exposed',
+            description='d',
+            severity='high',
+            target='https://target.example/graphql',
+            matched_at='https://target.example/graphql',
+            category='api',
+            confidence='medium',
+            verification_status='likely',
+            evidence='heuristic graphql match',
+        ),
+        Vulnerability(
+            source='custom-auth-check',
+            title='GraphQL Endpoint Accessible Without Authentication',
+            description='d',
+            severity='medium',
+            target='https://target.example/graphql',
+            matched_at='https://target.example/graphql',
+            category='authentication',
+            confidence='high',
+            verification_status='confirmed',
+            evidence='GET /graphql devolvió 200 con marcadores graphql',
+        ),
+    ]
+
+    correlated = correlate_vulnerabilities(items)
+
+    assert len(correlated) == 1
+    assert correlated[0].title == 'GraphQL Endpoint Accessible Without Authentication'
+    assert correlated[0].verification_status == 'confirmed'
+    assert correlated[0].source_count == 2
+
+
+def test_unique_confirmed_finding_keeps_higher_priority_than_multi_source_likely() -> None:
+    confirmed = Vulnerability(
+        source='custom-auth-check',
+        title='GraphQL Endpoint Accessible Without Authentication',
+        description='d',
+        severity='medium',
+        target='http://localhost:3000/graphql',
+        matched_at='http://localhost:3000/graphql',
+        category='authentication',
+        confidence='high',
+        verification_status='confirmed',
+    )
+    multi_source_likely = Vulnerability(
+        source='custom-api-check',
+        title='Multiple API Endpoints Exposed (3)',
+        description='d',
+        severity='medium',
+        target='http://localhost:3000/api',
+        matched_at='http://localhost:3000/api',
+        category='api',
+        confidence='high',
+        verification_status='likely',
+        source_count=3,
+        needs_manual_validation=True,
+    )
+
+    enrich_vulnerabilities([confirmed, multi_source_likely])
+    rank = {'low': 1, 'medium': 2, 'high': 3, 'critical': 4}
+
+    assert rank[confirmed.priority] >= rank[multi_source_likely.priority]

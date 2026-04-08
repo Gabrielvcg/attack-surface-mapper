@@ -13,12 +13,26 @@ SEVERITY_SCORE = {
     'critical': 5,
     'unknown': 0,
 }
+CONFIDENCE_SCORE = {
+    'low': 1,
+    'medium': 2,
+    'high': 3,
+}
+VERIFICATION_SCORE = {
+    'discarded': 0,
+    'heuristic': 1,
+    'needs_manual_validation': 2,
+    'likely': 3,
+    'confirmed': 4,
+}
 
 
 def _pick_primary(vulnerabilities: list[Vulnerability]) -> Vulnerability:
     return max(
         vulnerabilities,
         key=lambda v: (
+            VERIFICATION_SCORE.get((v.verification_status or '').lower(), 0),
+            CONFIDENCE_SCORE.get((v.confidence or '').lower(), 0),
             SEVERITY_SCORE.get((v.severity or 'unknown').lower(), 0),
             1 if v.source == 'nuclei' else 0,
             len(v.evidence or ''),

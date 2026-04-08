@@ -98,9 +98,17 @@ def compute_priority(vulnerability: Vulnerability) -> tuple[str, str]:
     if vulnerability.cvss_score is not None and vulnerability.cvss_score >= 7:
         score += 1
         reasons.append(f'cvss elevado={vulnerability.cvss_score}')
-    if vulnerability.source_count > 1:
+    if verification == 'confirmed':
         score += 1
-        reasons.append('múltiples fuentes correlacionadas')
+        reasons.append('hallazgo confirmado')
+    if vulnerability.source_count > 1 and verification == 'confirmed':
+        score += 1
+        reasons.append('múltiples fuentes correlacionadas con confirmación')
+    elif vulnerability.source_count > 1 and confidence == 'high':
+        score += 1
+        reasons.append('múltiples fuentes correlacionadas de alta confianza')
+    elif vulnerability.source_count > 1:
+        reasons.append('múltiples fuentes correlacionadas sin confirmación')
     if vulnerability.title.startswith('Multiple API Endpoints Exposed'):
         score += 1
         reasons.append('múltiples endpoints de API expuestos')
