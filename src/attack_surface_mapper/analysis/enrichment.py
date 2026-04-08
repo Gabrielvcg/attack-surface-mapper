@@ -132,6 +132,10 @@ def compute_priority(vulnerability: Vulnerability) -> tuple[str, str]:
         max_score = 4 if verification == 'confirmed' and confidence == 'high' else 3
         score = min(score, max_score)
         reasons.append('documentación o superficie api: prioridad acotada')
+    if title == 'graphql surface exposed':
+        max_score = 4 if verification == 'confirmed' and confidence == 'high' else 3
+        score = min(score, max_score)
+        reasons.append('superficie graphql pública: prioridad acotada')
     if title == 'graphql endpoint accessible without authentication' and verification != 'confirmed':
         score = min(score, 3)
         reasons.append('graphql sin prueba suficiente de acceso indebido')

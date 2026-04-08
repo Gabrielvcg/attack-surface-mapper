@@ -9,6 +9,14 @@ from attack_surface_mapper.validators.http_fingerprint import baseline_fingerpri
 
 
 class AuthValidator(BaseValidator):
+    API_SURFACE_PATHS: tuple[str, ...] = (
+        '/swagger',
+        '/swagger-ui',
+        '/openapi.json',
+        '/graphql',
+        '/api-docs',
+    )
+
     DEFAULT_PROTECTED_PATHS: tuple[str, ...] = (
         '/admin',
         '/dashboard',
@@ -152,6 +160,34 @@ class AuthValidator(BaseValidator):
             include, confidence, reason, verification = self._classify_open_access(path, response, body_preview, baseline)
             if not include:
                 continue
+            if path in self.API_SURFACE_PATHS:
+                if verification == 'confirmed':
+                    verification = 'likely'
+                    reason = f'{reason}; superficie api pública no demuestra acceso privilegiado por sí sola'
+                if confidence == 'high':
+                    confidence = 'medium'
+                title, description, severity = self._api_surface_metadata(path)
+                findings.append(Vulnerability(
+                    source='custom-auth-check',
+                    title=title,
+                    description=description,
+                    severity=severity,
+                    target=response.url,
+                    evidence=f'GET {response.url} devolviÃ³ {response.status_code}; validaciÃ³n={reason}',
+                    cwe=['CWE-200'],
+                    tags=['api', 'exposure'],
+                    template_id=f"custom-auth-open-{path.strip('/') or 'root'}",
+                    matched_at=response.url,
+                    host=host,
+                    port=port,
+                    scheme=scheme,
+                    type='http',
+                    category='api',
+                    confidence=confidence,
+                    needs_manual_validation=verification != 'confirmed',
+                    verification_status=verification,
+                ))
+                continue
             endpoint_name = self._endpoint_name(path)
             findings.append(Vulnerability(
                 source='custom-auth-check',
@@ -252,6 +288,32 @@ class AuthValidator(BaseValidator):
             '/login': 'Login Endpoint',
         }
         return mapping.get(path, f'Endpoint {path}')
+
+    @staticmethod
+    def _api_surface_metadata(path: str) -> tuple[str, str, str]:
+        if path in {'/swagger', '/swagger-ui', '/api-docs'}:
+            return (
+                'Swagger UI Exposed',
+                'Se ha detectado una interfaz de documentación o superficie API accesible sin restricciones claras.',
+                'medium',
+            )
+        if path == '/openapi.json':
+            return (
+                'OpenAPI Specification Exposed',
+                'Se ha detectado un documento OpenAPI/Swagger accesible públicamente.',
+                'medium',
+            )
+        if path == '/graphql':
+            return (
+                'GraphQL Surface Exposed',
+                'Se ha detectado una superficie GraphQL accesible sin evidencia suficiente de control de acceso fuerte.',
+                'medium',
+            )
+        return (
+            'API Surface Exposed',
+            f'Se ha detectado una superficie de API accesible públicamente en {path}.',
+            'medium',
+        )
 
     @staticmethod
     def _extract_set_cookie_headers(response) -> list[str]:
