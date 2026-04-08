@@ -237,3 +237,20 @@ def test_unique_confirmed_finding_keeps_higher_priority_than_multi_source_likely
     rank = {'low': 1, 'medium': 2, 'high': 3, 'critical': 4}
 
     assert rank[confirmed.priority] >= rank[multi_source_likely.priority]
+
+
+def test_confirmed_medium_header_does_not_escalate_to_high_priority_by_default() -> None:
+    vuln = Vulnerability(
+        source='custom-header-check',
+        title='Missing Content-Security-Policy Header',
+        description='d',
+        severity='medium',
+        target='https://target.example',
+        category='headers',
+        confidence='high',
+        verification_status='confirmed',
+    )
+
+    enrich_vulnerabilities([vuln])
+
+    assert vuln.priority == 'medium'

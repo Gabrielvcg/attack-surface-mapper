@@ -455,6 +455,7 @@ For a repeatable PowerShell flow on Windows:
 
 ```powershell
 .\scripts\validate_labs.ps1 -Labs juice-shop
+.\scripts\validate_labs.ps1 -Labs juice-shop -IncludeEnum
 ```
 
 The script now validates the generated `run_manifest.json`, `aggregate_summary.json`
@@ -462,6 +463,9 @@ and `report.summary.json`, and it accepts `-MinFindings` to require a minimum nu
 of correlated findings per run.
 It also exports `reviews/lab_findings_review.csv` so you can label findings as
 `verdadero`, `falso` or `dudoso` during false-positive review.
+When `-IncludeEnum` is enabled, the script uses
+`config/examples/lab-passive-recon-enum.yml` so the enum profile stays reproducible
+in Docker without depending on a host-side Nuclei install.
 
 ---
 
