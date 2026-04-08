@@ -11,6 +11,9 @@
 - Reutiliza una única baseline probe compartida entre validadores HTTP durante la validación pasiva, reduciendo requests redundantes.
 - Documenta una validación repetible con Juice Shop para contrastar perfiles pasivos.
 - Añade `scripts/validate_labs.ps1` para repetir validaciones de laboratorio con Juice Shop y DVWA desde Windows/PowerShell.
+- Estabiliza `report.summary.json`, `aggregate_summary.json` y `run_manifest.json` con secciones y claves más predecibles para futuro consumo estructurado.
+- Endurece `scripts/validate_labs.ps1` para validar artefactos generados, IDs estables y un mínimo configurable de hallazgos.
+- Reduce falsos positivos de `APIValidator` descartando pantallas de login servidas desde rutas como `/swagger` o `/graphql`.
 
 ## v10.22.6 false-positive tuning
 

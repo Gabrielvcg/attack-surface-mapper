@@ -3,6 +3,7 @@ param(
     [string[]]$Labs = @('juice-shop', 'dvwa'),
     [string[]]$Profiles = @('passive-stealth', 'passive-recon-safe'),
     [switch]$IncludeEnum,
+    [int]$MinFindings = 1,
     [switch]$KeepLabsRunning
 )
 
@@ -113,6 +114,83 @@ function Invoke-Scan {
     )
 }
 
+function Assert-RequiredJsonProperty {
+    param(
+        $Object,
+        [string]$PropertyName,
+        [string]$Context
+    )
+
+    if (-not ($Object.PSObject.Properties.Name -contains $PropertyName)) {
+        throw "Falta la propiedad '$PropertyName' en $Context"
+    }
+}
+
+function Assert-RunOutputs {
+    param(
+        [string]$RunName,
+        [string]$Target,
+        [int]$MinimumFindings
+    )
+
+    $slug = ($Target -replace '[^a-zA-Z0-9._-]+', '_')
+    if ($slug.Length -gt 80) {
+        $slug = $slug.Substring(0, 80)
+    }
+    if (-not $slug) {
+        $slug = 'target'
+    }
+
+    $runDir = Join-Path $workspace "scans\$RunName"
+    $manifestPath = Join-Path $runDir 'run_manifest.json'
+    $aggregatePath = Join-Path $runDir 'reports\aggregate_summary.json'
+    $summaryPath = Join-Path $runDir "targets\$slug\reports\report.summary.json"
+
+    foreach ($path in @($manifestPath, $aggregatePath, $summaryPath)) {
+        if (-not (Test-Path $path)) {
+            throw "No se generó el artefacto esperado: $path"
+        }
+    }
+
+    $manifest = Get-Content -Path $manifestPath -Raw | ConvertFrom-Json
+    $aggregate = Get-Content -Path $aggregatePath -Raw | ConvertFrom-Json
+    $summary = Get-Content -Path $summaryPath -Raw | ConvertFrom-Json
+
+    Assert-RequiredJsonProperty -Object $summary -PropertyName 'comparison' -Context $summaryPath
+    Assert-RequiredJsonProperty -Object $summary -PropertyName 'comparison_summary' -Context $summaryPath
+    Assert-RequiredJsonProperty -Object $summary -PropertyName 'top_findings' -Context $summaryPath
+    Assert-RequiredJsonProperty -Object $summary -PropertyName 'stats' -Context $summaryPath
+    Assert-RequiredJsonProperty -Object $aggregate -PropertyName 'summary' -Context $aggregatePath
+    Assert-RequiredJsonProperty -Object $manifest -PropertyName 'effective_config' -Context $manifestPath
+    Assert-RequiredJsonProperty -Object $manifest -PropertyName 'results_summary' -Context $manifestPath
+
+    if ([int]$summary.stats.total_findings -lt $MinimumFindings) {
+        throw "Se esperaban al menos $MinimumFindings hallazgos en $summaryPath y solo hubo $($summary.stats.total_findings)"
+    }
+    if ([int]$manifest.results_summary.successful_targets -lt 1) {
+        throw "El manifest no refleja targets exitosos en $manifestPath"
+    }
+    if ([int]$aggregate.summary.total_findings -lt $MinimumFindings) {
+        throw "El agregado no refleja el mínimo esperado de hallazgos en $aggregatePath"
+    }
+    if (@($summary.top_findings).Count -lt 1) {
+        throw "No hay top_findings en $summaryPath"
+    }
+
+    $topFinding = @($summary.top_findings)[0]
+    foreach ($property in @('finding_id', 'correlation_id', 'asset_host', 'asset_host_resolved')) {
+        Assert-RequiredJsonProperty -Object $topFinding -PropertyName $property -Context "$summaryPath top_findings[0]"
+    }
+    if (-not $topFinding.finding_id) {
+        throw "top_findings[0].finding_id está vacío en $summaryPath"
+    }
+    if (-not $topFinding.correlation_id) {
+        throw "top_findings[0].correlation_id está vacío en $summaryPath"
+    }
+
+    Write-Host "Validación estructural OK para $RunName" -ForegroundColor Green
+}
+
 $executedRuns = New-Object System.Collections.Generic.List[string]
 $startedLabs = New-Object System.Collections.Generic.List[string]
 
@@ -127,6 +205,7 @@ try {
             $runName = "lab_${safeLab}_${safeProfile}"
             Write-Host "Ejecutando $profile contra $labName -> $runName" -ForegroundColor Cyan
             Invoke-Scan -Target $lab.Target -Profile $profile -RunName $runName
+            Assert-RunOutputs -RunName $runName -Target $lab.Target -MinimumFindings $MinFindings
             $executedRuns.Add((Join-Path 'scans' $runName)) | Out-Null
         }
     }

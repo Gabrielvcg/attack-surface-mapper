@@ -147,3 +147,7 @@ On Windows/PowerShell, the same flow can be repeated with:
 ```powershell
 .\scripts\validate_labs.ps1 -Labs juice-shop
 ```
+
+The script also validates the generated manifest and summary artifacts. Use
+`-MinFindings 2` or similar if you want the smoke test to enforce a stricter
+minimum number of correlated findings.
