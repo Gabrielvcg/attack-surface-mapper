@@ -43,7 +43,7 @@ class PanelsValidator(BaseValidator):
                     continue
 
                 preview = normalise_text(response.text)
-                if path in {'/admin', '/dashboard'} and looks_like_login_surface(response, preview):
+                if path != '/login' and looks_like_login_surface(response, preview):
                     continue
                 include, confidence, reason, verification = self._classify(path, response, preview, baseline)
                 if not include:

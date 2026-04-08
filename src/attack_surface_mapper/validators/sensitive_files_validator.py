@@ -9,6 +9,10 @@ from attack_surface_mapper.validators.base import BaseValidator
 from attack_surface_mapper.validators.http_fingerprint import baseline_fingerprint, looks_like_baseline, normalise_text
 
 
+def _looks_like_html_document(preview: str, content_type: str) -> bool:
+    return '<html' in preview or '</html' in preview or ('text/html' in content_type and '<body' in preview)
+
+
 class SensitiveFilesValidator(BaseValidator):
     DEFAULT_PATHS: tuple[str, ...] = (
         '/.git/HEAD',
@@ -77,6 +81,8 @@ class SensitiveFilesValidator(BaseValidator):
 
     def _classify(self, path: str, response, preview: str) -> tuple[bool, str, str]:
         content_type = (response.headers.get('Content-Type') or '').lower()
+        if path in {'/.git/HEAD', '/.env', '/application.properties', '/application.yml', '/docker-compose.yml', '/db.sql', '/robots.txt', '/sitemap.xml'} and _looks_like_html_document(preview, content_type):
+            return False, 'low', 'respuesta html, no parece un fichero real'
         if path == '/.git/HEAD':
             ok = preview.startswith('ref: refs/')
             return ok, 'high' if ok else 'low', 'git HEAD marker'

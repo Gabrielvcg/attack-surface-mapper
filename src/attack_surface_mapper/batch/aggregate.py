@@ -14,6 +14,20 @@ NETWORK_DISCOVERY_CATEGORIES = {'network-service', 'database', 'remote-access', 
 PRIORITY_LABELS = ('critical', 'high', 'medium', 'low')
 SEVERITY_LABELS = ('critical', 'high', 'medium', 'low', 'info', 'unknown')
 _PRIORITY_ORDER = {'critical': 4, 'high': 3, 'medium': 2, 'low': 1}
+_PRIORITY_SORT = {'critical': 0, 'high': 1, 'medium': 2, 'low': 3}
+_SEVERITY_SORT = {'critical': 0, 'high': 1, 'medium': 2, 'low': 3, 'info': 4, 'unknown': 5}
+_VERIFICATION_SORT = {'confirmed': 0, 'likely': 1, 'needs_manual_validation': 2, 'heuristic': 3, 'discarded': 4}
+_CONFIDENCE_SORT = {'high': 0, 'medium': 1, 'low': 2}
+_CATEGORY_SORT = {
+    'authentication': 0,
+    'api': 1,
+    'panel-exposure': 2,
+    'sensitive-file': 3,
+    'secret': 4,
+    'tls': 5,
+    'headers': 6,
+    'discovery': 7,
+}
 _IPV4_RE = re.compile(r'^(?:\d{1,3}\.){3}\d{1,3}$')
 
 
@@ -92,6 +106,42 @@ def _network_title_key(vuln) -> str:
         # For network discoveries, port/category are the stable identifiers.
         return category
     return title
+
+
+def _is_inventory_like_record(item: dict) -> bool:
+    title = str(item.get('title') or '').lower()
+    category = str(item.get('category') or '').lower()
+    return (
+        category == 'discovery'
+        or title.startswith('multiple api endpoints exposed')
+        or title.startswith('protected api surface discovered')
+        or title.startswith('multiple client-side api references observed')
+        or title == 'client-side api reference observed'
+        or title.startswith('technology fingerprint detected')
+    )
+
+
+def _top_finding_bucket(item: dict) -> int:
+    if _is_inventory_like_record(item):
+        return 3
+    if str(item.get('category') or '').lower() == 'headers':
+        return 2
+    if str(item.get('verification_status') or '').lower() == 'confirmed':
+        return 0
+    return 1
+
+
+def _top_finding_sort_key(item: dict) -> tuple:
+    return (
+        _PRIORITY_SORT.get(str(item.get('priority') or '').lower(), 4),
+        _top_finding_bucket(item),
+        _VERIFICATION_SORT.get(str(item.get('verification_status') or '').lower(), 5),
+        _CATEGORY_SORT.get(str(item.get('category') or '').lower(), 98),
+        _SEVERITY_SORT.get(str(item.get('severity') or '').lower(), 6),
+        _CONFIDENCE_SORT.get(str(item.get('confidence') or '').lower(), 3),
+        -int(item.get('target_count') or 1),
+        str(item.get('title') or ''),
+    )
 
 
 def _aggregate_key(result_target: str, vuln, target_asset_hosts: dict[str, str | None]) -> tuple[str, str, str, str]:
@@ -206,14 +256,7 @@ def build_aggregate_payload(results: Iterable[ScanResult]) -> dict:
         else:
             finding['scope'] = 'target-specific'
 
-    top_findings.sort(
-        key=lambda item: (
-            _PRIORITY_ORDER.get((item.get('priority') or '').lower(), 0),
-            item.get('target_count', 1),
-            item['title'],
-        ),
-        reverse=True,
-    )
+    top_findings.sort(key=_top_finding_sort_key)
 
     per_target.sort(key=lambda item: item['target'])
     shared_asset_findings = [f for f in top_findings if f.get('scope') == 'shared-host']

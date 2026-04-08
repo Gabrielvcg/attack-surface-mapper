@@ -15,6 +15,18 @@ SEVERITY_LABELS = ['critical', 'high', 'medium', 'low', 'info', 'unknown']
 PRIORITY_LABELS = ['critical', 'high', 'medium', 'low']
 COMPARISON_KEYS = ('new_findings', 'resolved_findings', 'changed_findings')
 OPTIONAL_COMPARISON_KEYS = ('promoted_findings', 'regressed_findings', 'updated_findings')
+VERIFICATION_ORDER = {'confirmed': 0, 'likely': 1, 'needs_manual_validation': 2, 'heuristic': 3, 'discarded': 4}
+CONFIDENCE_ORDER = {'high': 0, 'medium': 1, 'low': 2}
+CATEGORY_ORDER = {
+    'authentication': 0,
+    'api': 1,
+    'panel-exposure': 2,
+    'sensitive-file': 3,
+    'secret': 4,
+    'tls': 5,
+    'headers': 6,
+    'discovery': 7,
+}
 
 
 
@@ -47,6 +59,46 @@ def _normalise_comparison(comparison: dict | None) -> dict[str, list[dict]]:
     normalised.setdefault('schema_version', '1.0')
     return normalised
 
+
+def _is_inventory_like(vulnerability: Vulnerability) -> bool:
+    title = (vulnerability.title or '').lower()
+    category = (vulnerability.category or '').lower()
+    return (
+        category == 'discovery'
+        or title.startswith('multiple api endpoints exposed')
+        or title.startswith('protected api surface discovered')
+        or title.startswith('multiple client-side api references observed')
+        or title == 'client-side api reference observed'
+        or title.startswith('technology fingerprint detected')
+    )
+
+
+def _sort_bucket(vulnerability: Vulnerability) -> int:
+    if _is_inventory_like(vulnerability):
+        return 3
+    if (vulnerability.category or '').lower() == 'headers':
+        return 2
+    if (vulnerability.verification_status or '').lower() == 'confirmed':
+        return 0
+    return 1
+
+
+def _report_sort_key(vulnerability: Vulnerability) -> tuple:
+    priority_order = {'critical': 0, 'high': 1, 'medium': 2, 'low': 3, None: 4}
+    severity_order = {'critical': 0, 'high': 1, 'medium': 2, 'low': 3, 'info': 4, 'unknown': 5, None: 6}
+    return (
+        priority_order.get(vulnerability.priority, 4),
+        _sort_bucket(vulnerability),
+        VERIFICATION_ORDER.get((vulnerability.verification_status or '').lower(), 5),
+        CATEGORY_ORDER.get((vulnerability.category or '').lower(), 98),
+        severity_order.get(vulnerability.severity, 6),
+        CONFIDENCE_ORDER.get((vulnerability.confidence or '').lower(), 3),
+        -(vulnerability.source_count or 1),
+        (vulnerability.category or ''),
+        vulnerability.title,
+        vulnerability.target,
+    )
+
 @dataclass(slots=True)
 class ReportPaths:
     markdown: str | None = None
@@ -76,18 +128,7 @@ class ReportGenerator:
 
     @staticmethod
     def sort_vulnerabilities(vulnerabilities: Iterable[Vulnerability]) -> list[Vulnerability]:
-        priority_order = {'critical': 0, 'high': 1, 'medium': 2, 'low': 3, None: 4}
-        severity_order = {'critical': 0, 'high': 1, 'medium': 2, 'low': 3, 'info': 4, 'unknown': 5, None: 6}
-        return sorted(
-            vulnerabilities,
-            key=lambda v: (
-                priority_order.get(v.priority, 4),
-                severity_order.get(v.severity, 6),
-                (v.category or ''),
-                v.title,
-                v.target,
-            ),
-        )
+        return sorted(vulnerabilities, key=_report_sort_key)
 
     @staticmethod
     def compute_stats(vulnerabilities: Iterable[Vulnerability]) -> ReportStats:
@@ -173,8 +214,6 @@ class ReportGenerator:
     def build_summary_payload(self, vulnerabilities: Iterable[Vulnerability], target: str, comparison: dict | None = None) -> dict:
         sorted_vulns = self.sort_vulnerabilities(vulnerabilities)
         stats = self.compute_stats(sorted_vulns)
-        comparison_payload = _normalise_comparison(comparison) if comparison else {}
-        comparison_payload = _normalise_comparison(comparison) if comparison else {}
         comparison_payload = _normalise_comparison(comparison)
         return {
             'schema_version': '1.0',
