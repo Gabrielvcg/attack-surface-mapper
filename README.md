@@ -451,6 +451,12 @@ When comparing both runs, start with:
 - `reports/aggregate_summary.json`
 - `targets/.../reports/report.summary.json`
 
+For a repeatable PowerShell flow on Windows:
+
+```powershell
+.\scripts\validate_labs.ps1 -Labs juice-shop
+```
+
 ---
 
 ## Output Structure

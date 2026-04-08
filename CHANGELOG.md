@@ -10,6 +10,7 @@
 - Añade identificadores deterministas por hallazgo y correlación para facilitar ingest futura en sistemas de indexación.
 - Reutiliza una única baseline probe compartida entre validadores HTTP durante la validación pasiva, reduciendo requests redundantes.
 - Documenta una validación repetible con Juice Shop para contrastar perfiles pasivos.
+- Añade `scripts/validate_labs.ps1` para repetir validaciones de laboratorio con Juice Shop y DVWA desde Windows/PowerShell.
 
 ## v10.22.6 false-positive tuning
 
