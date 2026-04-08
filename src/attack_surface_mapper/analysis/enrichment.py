@@ -83,6 +83,7 @@ def compute_priority(vulnerability: Vulnerability) -> tuple[str, str]:
     reasons: list[str] = [f'severidad base={vulnerability.severity.lower()}']
     category = (vulnerability.category or '').lower()
     target = (vulnerability.target or '').lower()
+    title = (vulnerability.title or '').lower()
     confidence = (vulnerability.confidence or '').lower()
     verification = (vulnerability.verification_status or '').lower()
 
@@ -127,6 +128,17 @@ def compute_priority(vulnerability: Vulnerability) -> tuple[str, str]:
     if category == 'headers' and (vulnerability.severity or '').lower() in {'low', 'info'}:
         score = min(score, 1)
         reasons.append('cabecera de bajo impacto')
+    if title in {'swagger ui exposed', 'openapi specification exposed', 'api surface exposed'}:
+        max_score = 4 if verification == 'confirmed' and confidence == 'high' else 3
+        score = min(score, max_score)
+        reasons.append('documentación o superficie api: prioridad acotada')
+    if title == 'graphql endpoint accessible without authentication' and verification != 'confirmed':
+        score = min(score, 3)
+        reasons.append('graphql sin prueba suficiente de acceso indebido')
+    if title.startswith('multiple api endpoints exposed'):
+        max_score = 4 if verification == 'confirmed' and confidence == 'high' else 3
+        score = min(score, max_score)
+        reasons.append('inventario de múltiples endpoints api')
     if category == 'discovery':
         score = 1
         reasons.append('hallazgo de descubrimiento, impacto limitado')

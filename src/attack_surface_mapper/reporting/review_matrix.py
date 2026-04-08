@@ -7,14 +7,26 @@ from typing import Iterable
 
 
 def review_bucket_for_finding(finding: dict) -> str:
+    title = str(finding.get('title') or '').lower()
     kind = str(finding.get('kind') or '').lower()
     category = str(finding.get('category') or '').lower()
     verification = str(finding.get('verification_status') or '').lower()
     confidence = str(finding.get('confidence') or '').lower()
     priority = str(finding.get('priority') or '').lower()
 
-    if kind == 'discovery' or category == 'discovery':
+    inventory_like = (
+        kind == 'discovery'
+        or category == 'discovery'
+        or title.startswith('multiple api endpoints exposed')
+        or title.startswith('protected api surface discovered')
+        or title.startswith('multiple client-side api references observed')
+        or title == 'client-side api reference observed'
+        or title.startswith('technology fingerprint detected')
+    )
+    if inventory_like:
         return 'descubrimiento'
+    if category == 'headers':
+        return 'revisar'
     if verification == 'confirmed' and confidence == 'high' and priority in {'medium', 'high', 'critical'}:
         return 'priorizar'
     if verification in {'confirmed', 'likely', 'needs_manual_validation'}:
