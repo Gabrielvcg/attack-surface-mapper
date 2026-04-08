@@ -118,6 +118,17 @@ def _split_report_groups(vulnerabilities: Iterable[Vulnerability]) -> tuple[list
     discovery = [v for v in sorted_vulns if (v.category or '').lower() == 'discovery']
     return application, hygiene, network, discovery
 
+
+def _headline_risk_findings(vulnerabilities: Iterable[Vulnerability]) -> list[Vulnerability]:
+    items = list(vulnerabilities)
+    preferred = [
+        vuln
+        for vuln in items
+        if (vuln.priority or '').lower() in {'critical', 'high', 'medium'}
+        or (vuln.verification_status or '').lower() == 'confirmed'
+    ]
+    return preferred or items
+
 @dataclass(slots=True)
 class ReportPaths:
     markdown: str | None = None
@@ -242,6 +253,7 @@ class ReportGenerator:
         sorted_vulns = self.sort_vulnerabilities(vulnerabilities)
         stats = self.compute_stats(sorted_vulns)
         application_findings, hygiene_findings, _, discovery_findings = _split_report_groups(sorted_vulns)
+        headline_risk_findings = _headline_risk_findings(application_findings)
         comparison_payload = _normalise_comparison(comparison)
         return {
             'schema_version': '1.0',
@@ -253,8 +265,8 @@ class ReportGenerator:
             'comparison_summary': dict(comparison_payload.get('summary') or {}),
             'top_finding_count': min(len(sorted_vulns), 10),
             'top_findings': [self._serialize_top_finding(v) for v in sorted_vulns[:10]],
-            'top_risk_finding_count': min(len(application_findings), 5),
-            'top_risk_findings': [self._serialize_top_finding(v) for v in application_findings[:5]],
+            'top_risk_finding_count': min(len(headline_risk_findings), 5),
+            'top_risk_findings': [self._serialize_top_finding(v) for v in headline_risk_findings[:5]],
             'top_hygiene_finding_count': min(len(hygiene_findings), 5),
             'top_hygiene_findings': [self._serialize_top_finding(v) for v in hygiene_findings[:5]],
             'top_discovery_finding_count': min(len(discovery_findings), 5),

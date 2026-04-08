@@ -167,6 +167,37 @@ def test_summary_top_findings_prioritise_application_risk_over_headers_and_inven
     assert payload['top_discovery_findings'][0]['title'] == 'Technology Fingerprint Detected (Angular)'
 
 
+def test_top_risk_findings_skip_low_likely_application_noise_when_stronger_items_exist() -> None:
+    findings = [
+        Vulnerability(
+            source='custom-api-check',
+            title='GraphQL Surface Exposed',
+            description='d',
+            severity='medium',
+            priority='medium',
+            target='https://target.example/graphql',
+            category='api',
+            confidence='medium',
+            verification_status='likely',
+        ),
+        Vulnerability(
+            source='custom-api-check',
+            title='Broad CORS Policy Observed',
+            description='d',
+            severity='low',
+            priority='low',
+            target='https://target.example',
+            category='api',
+            confidence='medium',
+            verification_status='likely',
+        ),
+    ]
+
+    payload = ReportGenerator().build_summary_payload(findings, 'https://target.example')
+
+    assert [item['title'] for item in payload['top_risk_findings']] == ['GraphQL Surface Exposed']
+
+
 def test_markdown_has_dedicated_hygiene_section(tmp_path) -> None:
     findings = [
         Vulnerability(
