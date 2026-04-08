@@ -151,3 +151,5 @@ On Windows/PowerShell, the same flow can be repeated with:
 The script also validates the generated manifest and summary artifacts. Use
 `-MinFindings 2` or similar if you want the smoke test to enforce a stricter
 minimum number of correlated findings.
+After each run it exports `reviews/lab_findings_review.csv`, ready to annotate
+with `verdadero`, `falso` or `dudoso` during false-positive review.
