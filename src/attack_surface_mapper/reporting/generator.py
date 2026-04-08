@@ -14,6 +14,7 @@ from attack_surface_mapper.models.vulnerability import Vulnerability
 SEVERITY_LABELS = ['critical', 'high', 'medium', 'low', 'info', 'unknown']
 PRIORITY_LABELS = ['critical', 'high', 'medium', 'low']
 COMPARISON_KEYS = ('new_findings', 'resolved_findings', 'changed_findings')
+OPTIONAL_COMPARISON_KEYS = ('promoted_findings', 'regressed_findings', 'updated_findings')
 
 
 
@@ -30,7 +31,21 @@ def _nonzero_count_items(counts: dict[str, int]) -> list[tuple[str, int]]:
 
 def _normalise_comparison(comparison: dict | None) -> dict[str, list[dict]]:
     payload = comparison or {}
-    return {key: list(payload.get(key, []) or []) for key in COMPARISON_KEYS}
+    normalised = dict(payload)
+    for key in COMPARISON_KEYS + OPTIONAL_COMPARISON_KEYS:
+        normalised[key] = list(payload.get(key, []) or [])
+    summary = dict(payload.get('summary') or {})
+    summary.setdefault('new_findings', len(normalised['new_findings']))
+    summary.setdefault('resolved_findings', len(normalised['resolved_findings']))
+    summary.setdefault('changed_findings', len(normalised['changed_findings']))
+    summary.setdefault('promoted_findings', len(normalised['promoted_findings']))
+    summary.setdefault('regressed_findings', len(normalised['regressed_findings']))
+    summary.setdefault('updated_findings', len(normalised['updated_findings']))
+    summary.setdefault('unchanged_findings', 0)
+    summary.setdefault('change_type_counts', {})
+    normalised['summary'] = summary
+    normalised.setdefault('schema_version', '1.0')
+    return normalised
 
 @dataclass(slots=True)
 class ReportPaths:
@@ -158,6 +173,8 @@ class ReportGenerator:
     def build_summary_payload(self, vulnerabilities: Iterable[Vulnerability], target: str, comparison: dict | None = None) -> dict:
         sorted_vulns = self.sort_vulnerabilities(vulnerabilities)
         stats = self.compute_stats(sorted_vulns)
+        comparison_payload = _normalise_comparison(comparison) if comparison else {}
+        comparison_payload = _normalise_comparison(comparison) if comparison else {}
         comparison_payload = _normalise_comparison(comparison)
         return {
             'schema_version': '1.0',
@@ -166,7 +183,7 @@ class ReportGenerator:
             'executive_summary': self.executive_summary(stats),
             'stats': asdict(stats),
             'comparison': comparison_payload,
-            'comparison_summary': {key: len(comparison_payload[key]) for key in COMPARISON_KEYS},
+            'comparison_summary': dict(comparison_payload.get('summary') or {}),
             'top_finding_count': min(len(sorted_vulns), 10),
             'top_findings': [self._serialize_top_finding(v) for v in sorted_vulns[:10]],
         }
@@ -227,6 +244,7 @@ class ReportGenerator:
     def generate_markdown(self, vulnerabilities: Iterable[Vulnerability], target: str, output_path: str, comparison: dict | None = None) -> str:
         sorted_vulns = self.sort_vulnerabilities(vulnerabilities)
         stats = self.compute_stats(sorted_vulns)
+        comparison_payload = _normalise_comparison(comparison) if comparison else {}
         network_services = [v for v in sorted_vulns if (v.category or '').lower() in NETWORK_DISCOVERY_CATEGORIES]
         discovery_like = [v for v in sorted_vulns if (v.category or '').lower() == 'discovery']
         vulnerability_like = [v for v in sorted_vulns if (v.category or '').lower() not in NETWORK_DISCOVERY_CATEGORIES | {'discovery'}]
@@ -251,11 +269,14 @@ class ReportGenerator:
         lines += ['', '## Categorías', '']
         for name, count in stats.category_counts.items():
             lines.append(f'- **{name}**: {count}')
-        if comparison:
+        if comparison_payload:
             lines += ['', '## Comparación con baseline', '']
-            lines.append(f"- **Nuevos hallazgos:** {len(comparison.get('new_findings', []))}")
-            lines.append(f"- **Hallazgos resueltos:** {len(comparison.get('resolved_findings', []))}")
-            lines.append(f"- **Hallazgos modificados:** {len(comparison.get('changed_findings', []))}")
+            summary = comparison_payload.get('summary', {})
+            lines.append(f"- **Nuevos hallazgos:** {summary.get('new_findings', len(comparison_payload.get('new_findings', [])))}")
+            lines.append(f"- **Hallazgos resueltos:** {summary.get('resolved_findings', len(comparison_payload.get('resolved_findings', [])))}")
+            lines.append(f"- **Hallazgos modificados:** {summary.get('changed_findings', len(comparison_payload.get('changed_findings', [])))}")
+            lines.append(f"- **Promovidos en riesgo/confianza:** {summary.get('promoted_findings', len(comparison_payload.get('promoted_findings', [])))}")
+            lines.append(f"- **Regresados o debilitados:** {summary.get('regressed_findings', len(comparison_payload.get('regressed_findings', [])))}")
 
         lines += ['', '## Hallazgos confirmados de aplicación', '']
         if not confirmed:
@@ -286,6 +307,7 @@ class ReportGenerator:
     def generate_html(self, vulnerabilities: Iterable[Vulnerability], target: str, output_path: str, comparison: dict | None = None) -> str:
         sorted_vulns = self.sort_vulnerabilities(vulnerabilities)
         stats = self.compute_stats(sorted_vulns)
+        comparison_payload = _normalise_comparison(comparison) if comparison else {}
         findings = []
         for vuln in sorted_vulns:
             findings.append(
@@ -299,12 +321,14 @@ class ReportGenerator:
                 f"<p><strong>Recomendación:</strong> {html.escape(vuln.recommendation or '')}</p></section>"
             )
         comparison_html = ''
-        if comparison:
+        if comparison_payload:
             comparison_html = (
                 f"<section><h2>Comparación con baseline</h2><ul>"
-                f"<li>Nuevos hallazgos: {len(comparison.get('new_findings', []))}</li>"
-                f"<li>Hallazgos resueltos: {len(comparison.get('resolved_findings', []))}</li>"
-                f"<li>Hallazgos modificados: {len(comparison.get('changed_findings', []))}</li>"
+                f"<li>Nuevos hallazgos: {comparison_payload.get('summary', {}).get('new_findings', len(comparison_payload.get('new_findings', [])))}</li>"
+                f"<li>Hallazgos resueltos: {comparison_payload.get('summary', {}).get('resolved_findings', len(comparison_payload.get('resolved_findings', [])))}</li>"
+                f"<li>Hallazgos modificados: {comparison_payload.get('summary', {}).get('changed_findings', len(comparison_payload.get('changed_findings', [])))}</li>"
+                f"<li>Promovidos en riesgo/confianza: {comparison_payload.get('summary', {}).get('promoted_findings', len(comparison_payload.get('promoted_findings', [])))}</li>"
+                f"<li>Regresados o debilitados: {comparison_payload.get('summary', {}).get('regressed_findings', len(comparison_payload.get('regressed_findings', [])))}</li>"
                 f"</ul></section>"
             )
         content = f"""<!doctype html>

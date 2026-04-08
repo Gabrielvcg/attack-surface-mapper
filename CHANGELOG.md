@@ -14,6 +14,8 @@
 - Estabiliza `report.summary.json`, `aggregate_summary.json` y `run_manifest.json` con secciones y claves más predecibles para futuro consumo estructurado.
 - Endurece `scripts/validate_labs.ps1` para validar artefactos generados, IDs estables y un mínimo configurable de hallazgos.
 - Reduce falsos positivos de `APIValidator` descartando pantallas de login servidas desde rutas como `/swagger` o `/graphql`.
+- Enriquece `comparison.json` y la secciÃ³n de comparativa en reportes con promociones, regresiones y cambios de confianza/verificaciÃ³n.
+- Alinea mejor `verification_status`, `needs_manual_validation` y prioridad para que un hallazgo `confirmed` no siga marcado como revisiÃ³n manual por inercia de categorÃ­a.
 
 ## v10.22.6 false-positive tuning
 
