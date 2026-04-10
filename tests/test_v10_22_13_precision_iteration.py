@@ -186,8 +186,9 @@ def test_summary_top_findings_prioritise_application_risk_over_headers_and_inven
         'Technology Fingerprint Detected (Angular)',
     ]
     assert payload['top_risk_findings'][0]['title'] == 'GraphQL Surface Exposed'
+    assert payload['top_review_findings'][0]['title'] == 'GraphQL Surface Exposed'
     assert payload['top_hygiene_findings'][0]['title'] == 'Missing Content-Security-Policy Header'
-    assert payload['top_discovery_findings'][0]['title'] == 'Technology Fingerprint Detected (Angular)'
+    assert payload['top_discovery_findings'][0]['title'] == 'Multiple API Endpoints Exposed (10)'
 
 
 def test_top_risk_findings_skip_low_likely_application_noise_when_stronger_items_exist() -> None:

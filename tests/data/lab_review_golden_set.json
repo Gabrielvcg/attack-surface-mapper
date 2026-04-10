@@ -1,0 +1,44 @@
+[
+  {
+    "run_name": "lab_juice_shop_passive_recon_enum",
+    "title": "Metrics Endpoint Accessible Without Authentication",
+    "bucket_revision": "priorizar",
+    "priority": "critical",
+    "verification_status": "confirmed"
+  },
+  {
+    "run_name": "lab_juice_shop_passive_recon_enum",
+    "title": "Swagger UI Exposed",
+    "bucket_revision": "revisar",
+    "priority": "medium",
+    "verification_status": "likely"
+  },
+  {
+    "run_name": "lab_juice_shop_passive_recon_enum",
+    "title": "GraphQL Surface Exposed",
+    "bucket_revision": "revisar",
+    "priority": "medium",
+    "verification_status": "likely"
+  },
+  {
+    "run_name": "lab_juice_shop_passive_recon_enum",
+    "title": "Multiple API Endpoints Exposed (10)",
+    "bucket_revision": "descubrimiento",
+    "priority": "medium",
+    "verification_status": "likely"
+  },
+  {
+    "run_name": "lab_juice_shop_passive_recon_enum",
+    "title": "Broad CORS Policy Observed",
+    "bucket_revision": "revisar",
+    "priority": "low",
+    "verification_status": "likely"
+  },
+  {
+    "run_name": "lab_dvwa_passive_recon_safe",
+    "title": "Missing Content-Security-Policy Header",
+    "bucket_revision": "revisar",
+    "priority": "medium",
+    "verification_status": "confirmed"
+  }
+]

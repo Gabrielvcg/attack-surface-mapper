@@ -13,6 +13,7 @@ class PanelsValidator(BaseValidator):
         '/admin',
         '/login',
         '/dashboard',
+        '/management',
         '/swagger',
         '/swagger-ui',
         '/actuator',
@@ -96,10 +97,10 @@ class PanelsValidator(BaseValidator):
             if 'text/plain' in content_type:
                 score += 1
                 reasons.append('content-type text/plain')
-        elif path == '/actuator':
+        elif path in {'/actuator', '/management'}:
             if any(token in body_preview for token in ('"_links"', 'actuator', '"status"', 'health')):
                 score += 3
-                reasons.append('marcadores actuator encontrados')
+                reasons.append('marcadores operativos encontrados')
             if 'json' in content_type:
                 score += 1
                 reasons.append('content-type json')
@@ -135,9 +136,9 @@ class PanelsValidator(BaseValidator):
 
     @staticmethod
     def _severity_for(path: str, confidence: str) -> str:
-        if confidence == 'high' and path in {'/metrics', '/actuator'}:
+        if confidence == 'high' and path in {'/metrics', '/actuator', '/management'}:
             return 'medium'
-        if path in {'/metrics', '/actuator', '/admin', '/dashboard', '/swagger', '/swagger-ui'}:
+        if path in {'/metrics', '/actuator', '/management', '/admin', '/dashboard', '/swagger', '/swagger-ui'}:
             return 'medium'
         return 'low'
 
@@ -148,6 +149,8 @@ class PanelsValidator(BaseValidator):
             return 'Exposed Metrics Endpoint'
         if path == '/actuator':
             return 'Exposed Actuator Endpoint'
+        if path == '/management':
+            return 'Exposed Management Endpoint'
         if path in {'/swagger', '/swagger-ui'}:
             return 'Exposed API Documentation Panel'
         if path == '/admin':
