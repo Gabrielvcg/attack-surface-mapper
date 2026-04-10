@@ -2,6 +2,10 @@
 
 ## v10.22.8 polish
 
+- Introduce un scoring estructurado (`scoring_version`, `priority_score`) basado en severidad, confianza, rol del hallazgo y base de validaciÃ³n, manteniendo la salida `low/medium/high/critical` pero haciÃ©ndola mÃ¡s estable y auditable.
+- Expone el score numÃ©rico y su razÃ³n en reportes, CSV, agregados y matriz de revisiÃ³n para facilitar comparativas futuras e ingest estructurado.
+- Ajusta `comparison.json` para detectar cambios en `priority_score` aunque la etiqueta de prioridad no cambie, mejorando el seguimiento fino entre runs.
+
 - Introduce una capa de validaciÃ³n explÃ­cita en el modelo de hallazgo con `finding_role`, `validated` y `validation_basis`, separando mejor descubrimiento, candidatos y evidencia validada.
 - Propaga esa semÃ¡ntica a `report.summary.json`, `aggregate_summary.json`, `comparison.json` y la matriz de revisiÃ³n para dejar el output estructurado mÃ¡s estable y mÃ¡s honesto.
 - Mantiene compatibilidad con hallazgos previos o JSON legacy: reporting, agregado y comparaciÃ³n infieren el rol de validaciÃ³n cuando el campo nuevo todavÃ­a no existe.

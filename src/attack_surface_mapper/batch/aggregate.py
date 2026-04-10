@@ -190,6 +190,7 @@ def _split_aggregate_findings(items: list[dict]) -> tuple[list[dict], list[dict]
 def _top_finding_sort_key(item: dict) -> tuple:
     return (
         _PRIORITY_SORT.get(str(item.get('priority') or '').lower(), 4),
+        -int(item.get('priority_score') or 0),
         _top_finding_bucket(item),
         _VERIFICATION_SORT.get(str(item.get('verification_status') or '').lower(), 5),
         _CATEGORY_SORT.get(str(item.get('category') or '').lower(), 98),
@@ -221,7 +222,10 @@ def _build_finding_record(result_target: str, vuln, target_asset_hosts: dict[str
         'title': vuln.title,
         'finding_id': vuln.finding_id,
         'correlation_id': vuln.correlation_id,
+        'scoring_version': vuln.scoring_version,
         'priority': vuln.priority,
+        'priority_score': vuln.priority_score,
+        'priority_reason': vuln.priority_reason,
         'severity': vuln.severity,
         'category': vuln.category,
         'kind': vuln.kind,
@@ -279,10 +283,13 @@ def build_aggregate_payload(results: Iterable[ScanResult]) -> dict:
                 record['recommendation'] = vuln.recommendation
                 record['finding_id'] = vuln.finding_id
                 record['correlation_id'] = vuln.correlation_id
+                record['scoring_version'] = vuln.scoring_version
                 record['kind'] = vuln.kind
                 record['finding_role'] = vuln.finding_role
                 record['validated'] = vuln.validated
                 record['validation_basis'] = vuln.validation_basis
+                record['priority_score'] = vuln.priority_score
+                record['priority_reason'] = vuln.priority_reason
                 record['confidence'] = vuln.confidence
                 record['source_count'] = vuln.source_count
                 record['evidence_summary'] = vuln.evidence_summary
@@ -326,11 +333,13 @@ def build_aggregate_payload(results: Iterable[ScanResult]) -> dict:
     actionable_risk_findings, review_surface_findings, hygiene_findings, network_findings, discovery_findings = _split_aggregate_findings(target_specific_findings)
     return {
         'schema_version': '1.0',
+        'scoring_version': max({v.scoring_version for result in result_list for v in result.vulnerabilities if v.scoring_version} or {'1.0'}),
         'finding_contract': Vulnerability.contract_metadata(),
         'summary': {
             'total_targets': total_targets,
             'raw_total_findings': raw_total_findings,
             'total_findings': len(top_findings),
+            'average_priority_score': round(sum(int(item.get('priority_score') or 0) for item in top_findings) / len(top_findings), 1) if top_findings else None,
             'validated_findings': sum(1 for item in top_findings if bool(item.get('validated')) or _finding_role_record(item) == 'validated'),
             'candidate_findings': sum(1 for item in top_findings if _finding_role_record(item) == 'candidate'),
             'actionable_risk_findings': len(actionable_risk_findings),
@@ -344,6 +353,7 @@ def build_aggregate_payload(results: Iterable[ScanResult]) -> dict:
         'total_targets': total_targets,
         'raw_total_findings': raw_total_findings,
         'total_findings': len(top_findings),
+        'average_priority_score': round(sum(int(item.get('priority_score') or 0) for item in top_findings) / len(top_findings), 1) if top_findings else None,
         'validated_findings': sum(1 for item in top_findings if bool(item.get('validated')) or _finding_role_record(item) == 'validated'),
         'candidate_findings': sum(1 for item in top_findings if _finding_role_record(item) == 'candidate'),
         'priority_counts': _stable_counts(priority_counter, PRIORITY_LABELS),
@@ -441,7 +451,7 @@ def write_aggregate_reports(results: Iterable[ScanResult], output_dir: str) -> d
     csv_path = output / 'aggregate_findings.csv'
     with csv_path.open('w', encoding='utf-8', newline='') as handle:
         writer = csv.writer(handle)
-        writer.writerow(['scope', 'targets', 'target_count', 'location', 'target_host_original', 'asset_host', 'asset_host_resolved', 'asset_port', 'finding_id', 'correlation_id', 'title', 'priority', 'severity', 'category', 'kind', 'finding_role', 'validated', 'validation_basis', 'verification_status', 'recommendation'])
+        writer.writerow(['scope', 'targets', 'target_count', 'location', 'target_host_original', 'asset_host', 'asset_host_resolved', 'asset_port', 'finding_id', 'correlation_id', 'title', 'priority', 'priority_score', 'scoring_version', 'priority_reason', 'severity', 'category', 'kind', 'finding_role', 'validated', 'validation_basis', 'verification_status', 'recommendation'])
         for finding in payload['top_findings']:
             writer.writerow([
                 finding.get('scope', ''),
@@ -456,6 +466,9 @@ def write_aggregate_reports(results: Iterable[ScanResult], output_dir: str) -> d
                 finding.get('correlation_id', ''),
                 finding['title'],
                 finding['priority'],
+                finding.get('priority_score', ''),
+                finding.get('scoring_version', ''),
+                finding.get('priority_reason', ''),
                 finding['severity'],
                 finding['category'],
                 finding.get('kind', ''),

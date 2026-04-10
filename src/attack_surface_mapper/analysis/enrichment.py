@@ -24,6 +24,35 @@ PRIORITY_LABELS = {
     7: 'critical',
 }
 
+SCORING_VERSION = '1.0'
+SEVERITY_BASE_SCORE = {
+    'info': 8,
+    'low': 20,
+    'medium': 45,
+    'high': 68,
+    'critical': 85,
+    'unknown': 0,
+}
+CONFIDENCE_ADJUSTMENTS = {
+    'low': -15,
+    'medium': 0,
+    'high': 10,
+}
+ROLE_ADJUSTMENTS = {
+    'discovery': -30,
+    'candidate': -5,
+    'validated': 15,
+}
+VALIDATION_BASIS_ADJUSTMENTS = {
+    'context-only': -10,
+    'discarded-signal': -25,
+    'heuristic-evidence': -5,
+    'template-evidence': 6,
+    'configuration-evidence': 8,
+    'response-evidence': 14,
+    'correlated-evidence': 18,
+}
+
 NETWORK_DISCOVERY_CATEGORIES = {'network-service', 'database', 'remote-access', 'message-broker', 'admin-surface', 'web-service', 'file-transfer', 'search-service'}
 
 CATEGORY_RECOMMENDATIONS: dict[str, str] = {
@@ -91,6 +120,16 @@ def _base_priority(vulnerability: Vulnerability) -> int:
     return SEVERITY_SCORE.get((vulnerability.severity or 'unknown').lower(), 0)
 
 
+def _priority_label_from_score(score: int) -> str:
+    if score >= 85:
+        return 'critical'
+    if score >= 60:
+        return 'high'
+    if score >= 30:
+        return 'medium'
+    return 'low'
+
+
 def _derive_validation_basis(vulnerability: Vulnerability) -> str:
     verification = (vulnerability.verification_status or '').lower()
     category = (vulnerability.category or '').lower()
@@ -134,7 +173,7 @@ def _apply_validation_model(vulnerability: Vulnerability) -> None:
     vulnerability.validated = False
 
 
-def compute_priority(vulnerability: Vulnerability) -> tuple[str, str]:
+def compute_priority_v1(vulnerability: Vulnerability) -> tuple[str, str]:
     score = _base_priority(vulnerability)
     reasons: list[str] = [f'severidad base={vulnerability.severity.lower()}']
     category = (vulnerability.category or '').lower()
@@ -224,6 +263,98 @@ def compute_priority(vulnerability: Vulnerability) -> tuple[str, str]:
 
     score = max(1, min(score, 7))
     return PRIORITY_LABELS[score], '; '.join(reasons)
+
+
+def compute_priority(vulnerability: Vulnerability) -> tuple[str, int, str]:
+    category = (vulnerability.category or '').lower()
+    target = (vulnerability.target or '').lower()
+    title = (vulnerability.title or '').lower()
+    confidence = (vulnerability.confidence or '').lower()
+    verification = (vulnerability.verification_status or '').lower()
+    finding_role = (vulnerability.finding_role or '').lower()
+    validation_basis = (vulnerability.validation_basis or '').lower()
+    severity = (vulnerability.severity or 'unknown').lower()
+
+    score = SEVERITY_BASE_SCORE.get(severity, 0)
+    reasons: list[str] = [f'severidad base={severity}:{score}']
+
+    def bump(delta: int, reason: str) -> None:
+        nonlocal score
+        score += delta
+        reasons.append(f'{reason} ({delta:+d})')
+
+    bump(CONFIDENCE_ADJUSTMENTS.get(confidence, 0), f'confianza={confidence or "unknown"}')
+    bump(ROLE_ADJUSTMENTS.get(finding_role, 0), f'rol={finding_role or "unset"}')
+    bump(VALIDATION_BASIS_ADJUSTMENTS.get(validation_basis, 0), f'base={validation_basis or "unset"}')
+
+    if category in {'secret', 'authentication', 'database', 'message-broker'}:
+        bump(8, f'categoría sensible={category}')
+    elif category in {'panel-exposure', 'api', 'sensitive-file', 'network-service', 'message-broker', 'admin-surface', 'remote-access'}:
+        bump(5, f'categoría expuesta={category}')
+
+    if '/admin' in target or '/metrics' in target or '/swagger' in target or '/graphql' in target:
+        bump(8, 'endpoint de alto interés')
+    if any(token in target for token in ('/metrics', '/actuator', '/swagger', '/openapi', '/graphql')) and 'localhost' not in target:
+        bump(6, 'exposición remota fuera de localhost')
+    if vulnerability.source == 'nuclei' and any(token in target for token in ('/metrics', 'prometheus')):
+        bump(10, 'template nuclei sobre endpoint de métricas')
+    if vulnerability.cvss_score is not None and vulnerability.cvss_score >= 7:
+        bump(8, f'cvss elevado={vulnerability.cvss_score}')
+
+    if vulnerability.source_count > 1 and verification == 'confirmed':
+        bump(10, 'múltiples fuentes correlacionadas con confirmación')
+    elif vulnerability.source_count > 1 and confidence == 'high':
+        bump(6, 'múltiples fuentes correlacionadas de alta confianza')
+    elif vulnerability.source_count > 1:
+        reasons.append('múltiples fuentes correlacionadas sin confirmación (+0)')
+
+    if verification in {'likely', 'heuristic', 'needs_manual_validation'}:
+        bump(-8, f'validación={verification}')
+    if vulnerability.needs_manual_validation:
+        bump(-5, 'requiere validación manual')
+
+    if category == 'headers' and severity in {'low', 'info'}:
+        score = min(score, 25)
+        reasons.append('cabecera de bajo impacto (tope 25)')
+    elif category == 'headers' and severity == 'medium':
+        score = min(score, 59)
+        reasons.append('cabecera media de endurecimiento: tope medium')
+
+    if title in {'swagger ui exposed', 'openapi specification exposed', 'api surface exposed'}:
+        score = min(score, 49)
+        reasons.append('documentación o superficie api: tope medium')
+    if title == 'graphql surface exposed':
+        max_score = 59 if verification == 'confirmed' and confidence == 'high' else 49
+        score = min(score, max_score)
+        reasons.append(f'superficie graphql pública: tope {max_score}')
+    if title == 'graphql endpoint accessible without authentication' and verification != 'confirmed':
+        score = min(score, 59)
+        reasons.append('graphql sin prueba suficiente de acceso indebido (tope high bajo)')
+    if title.startswith('multiple api endpoints exposed'):
+        if finding_role == 'discovery':
+            score = min(score, 49)
+            score = max(score, 30)
+            reasons.append('inventario api amplio de descubrimiento: banda medium')
+        else:
+            max_score = 59 if verification == 'confirmed' and confidence == 'high' else 49
+            score = min(score, max_score)
+            reasons.append(f'inventario de múltiples endpoints api: tope {max_score}')
+    if finding_role == 'discovery' or category == 'discovery':
+        score = min(score, 34)
+        reasons.append('hallazgo de descubrimiento/contexto: tope medium bajo')
+    if vulnerability.source == 'nuclei' and ('epmd' in target or 'rabbit' in (vulnerability.evidence_summary or '').lower() or 'erlang port mapper' in title):
+        score = min(max(score, 30), 49)
+        reasons.append('middleware Erlang/RabbitMQ potencialmente expuesto: banda medium')
+
+    if vulnerability.source == 'nmap' and category in NETWORK_DISCOVERY_CATEGORIES and category not in {'database', 'admin-surface'}:
+        score = min(score, 49)
+        reasons.append('descubrimiento de red: tope medium')
+    if vulnerability.source == 'nmap' and category == 'web-service' and (vulnerability.port or '') in {'80', '443'}:
+        score = min(score, 20)
+        reasons.append('servicio web estándar esperado: tope low')
+
+    score = max(0, min(score, 100))
+    return _priority_label_from_score(score), score, '; '.join(reasons)
 
 
 def compute_confidence(vulnerability: Vulnerability) -> str:
@@ -316,7 +447,8 @@ def enrich_vulnerabilities(vulnerabilities: list[Vulnerability]) -> list[Vulnera
         _normalise_validation_state(vulnerability)
         vulnerability.kind = infer_kind(vulnerability)
         _apply_validation_model(vulnerability)
-        vulnerability.priority, vulnerability.priority_reason = compute_priority(vulnerability)
+        vulnerability.priority, vulnerability.priority_score, vulnerability.priority_reason = compute_priority(vulnerability)
+        vulnerability.scoring_version = SCORING_VERSION
         vulnerability.recommendation = vulnerability.recommendation or compute_recommendation(vulnerability)
         vulnerability.evidence_summary = clean_evidence(vulnerability.evidence_summary or build_evidence_summary(vulnerability))
         vulnerability.evidence = clean_evidence(vulnerability.evidence, max_len=1200)
