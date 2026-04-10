@@ -4,41 +4,79 @@
     "title": "Metrics Endpoint Accessible Without Authentication",
     "bucket_revision": "priorizar",
     "priority": "critical",
-    "verification_status": "confirmed"
+    "verification_status": "confirmed",
+    "needs_manual_validation": "false"
   },
   {
     "run_name": "lab_juice_shop_passive_recon_enum",
     "title": "Swagger UI Exposed",
     "bucket_revision": "revisar",
     "priority": "medium",
-    "verification_status": "likely"
+    "verification_status": "likely",
+    "needs_manual_validation": "true"
   },
   {
     "run_name": "lab_juice_shop_passive_recon_enum",
     "title": "GraphQL Surface Exposed",
     "bucket_revision": "revisar",
     "priority": "medium",
-    "verification_status": "likely"
+    "verification_status": "likely",
+    "needs_manual_validation": "true"
   },
   {
     "run_name": "lab_juice_shop_passive_recon_enum",
     "title": "Multiple API Endpoints Exposed (10)",
     "bucket_revision": "descubrimiento",
     "priority": "medium",
-    "verification_status": "likely"
+    "verification_status": "likely",
+    "needs_manual_validation": "false"
   },
   {
     "run_name": "lab_juice_shop_passive_recon_enum",
     "title": "Broad CORS Policy Observed",
     "bucket_revision": "revisar",
     "priority": "low",
-    "verification_status": "likely"
+    "verification_status": "likely",
+    "needs_manual_validation": "true"
   },
   {
     "run_name": "lab_dvwa_passive_recon_safe",
     "title": "Missing Content-Security-Policy Header",
     "bucket_revision": "revisar",
     "priority": "medium",
-    "verification_status": "confirmed"
+    "verification_status": "confirmed",
+    "needs_manual_validation": "false"
+  },
+  {
+    "run_name": "lab_juice_shop_passive_recon_enum",
+    "title": "Multiple Client-Side API References Observed (7)",
+    "bucket_revision": "descubrimiento",
+    "priority": "low",
+    "verification_status": "confirmed",
+    "needs_manual_validation": "false"
+  },
+  {
+    "run_name": "lab_juice_shop_passive_recon_enum",
+    "title": "Protected API Surface Discovered (7 endpoints)",
+    "bucket_revision": "descubrimiento",
+    "priority": "low",
+    "verification_status": "confirmed",
+    "needs_manual_validation": "false"
+  },
+  {
+    "run_name": "lab_juice_shop_passive_recon_enum",
+    "title": "Technology Fingerprint Detected (Angular)",
+    "bucket_revision": "descubrimiento",
+    "priority": "low",
+    "verification_status": "likely",
+    "needs_manual_validation": "false"
+  },
+  {
+    "run_name": "lab_juice_shop_passive_recon_enum",
+    "title": "robots.txt Exposed",
+    "bucket_revision": "descubrimiento",
+    "priority": "low",
+    "verification_status": "likely",
+    "needs_manual_validation": "false"
   }
 ]
