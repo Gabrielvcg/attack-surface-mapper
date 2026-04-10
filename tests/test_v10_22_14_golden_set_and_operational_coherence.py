@@ -83,6 +83,36 @@ def test_summary_payload_separates_review_surface_from_actionable_risk() -> None
     assert [item['title'] for item in payload['top_review_findings']] == ['Swagger UI Exposed']
 
 
+def test_inventory_like_findings_do_not_force_manual_validation() -> None:
+    findings = [
+        Vulnerability(
+            source='custom-api-check',
+            title='Multiple API Endpoints Exposed (10)',
+            description='d',
+            severity='medium',
+            target='https://target.example/api',
+            category='api',
+            confidence='medium',
+            verification_status='likely',
+        ),
+        Vulnerability(
+            source='custom-fingerprint-check',
+            title='Technology Fingerprint Detected (Angular)',
+            description='d',
+            severity='low',
+            target='https://target.example/',
+            category='discovery',
+            confidence='medium',
+            verification_status='likely',
+        ),
+    ]
+
+    payload = ReportGenerator().build_summary_payload(findings, 'https://target.example')
+
+    assert payload['stats']['needs_manual_validation'] == 0
+    assert payload['top_discovery_findings'][0]['title'] == 'Multiple API Endpoints Exposed (10)'
+
+
 def test_aggregate_payload_exposes_finding_contract_and_keeps_review_surface_in_top_findings() -> None:
     findings = [
         Vulnerability(
@@ -141,6 +171,7 @@ def test_review_golden_set_matches_expected_rows() -> None:
             'bucket_revision': 'priorizar',
             'priority': 'critical',
             'verification_status': 'confirmed',
+            'needs_manual_validation': 'false',
         },
         {
             'run_name': 'lab_juice_shop_passive_recon_enum',
@@ -148,6 +179,7 @@ def test_review_golden_set_matches_expected_rows() -> None:
             'bucket_revision': 'revisar',
             'priority': 'medium',
             'verification_status': 'likely',
+            'needs_manual_validation': 'true',
         },
         {
             'run_name': 'lab_juice_shop_passive_recon_enum',
@@ -155,6 +187,7 @@ def test_review_golden_set_matches_expected_rows() -> None:
             'bucket_revision': 'revisar',
             'priority': 'medium',
             'verification_status': 'likely',
+            'needs_manual_validation': 'true',
         },
         {
             'run_name': 'lab_juice_shop_passive_recon_enum',
@@ -162,6 +195,7 @@ def test_review_golden_set_matches_expected_rows() -> None:
             'bucket_revision': 'descubrimiento',
             'priority': 'medium',
             'verification_status': 'likely',
+            'needs_manual_validation': 'false',
         },
         {
             'run_name': 'lab_juice_shop_passive_recon_enum',
@@ -169,6 +203,7 @@ def test_review_golden_set_matches_expected_rows() -> None:
             'bucket_revision': 'revisar',
             'priority': 'low',
             'verification_status': 'likely',
+            'needs_manual_validation': 'true',
         },
         {
             'run_name': 'lab_dvwa_passive_recon_safe',
@@ -176,6 +211,39 @@ def test_review_golden_set_matches_expected_rows() -> None:
             'bucket_revision': 'revisar',
             'priority': 'medium',
             'verification_status': 'confirmed',
+            'needs_manual_validation': 'false',
+        },
+        {
+            'run_name': 'lab_juice_shop_passive_recon_enum',
+            'title': 'Multiple Client-Side API References Observed (7)',
+            'bucket_revision': 'descubrimiento',
+            'priority': 'low',
+            'verification_status': 'confirmed',
+            'needs_manual_validation': 'false',
+        },
+        {
+            'run_name': 'lab_juice_shop_passive_recon_enum',
+            'title': 'Protected API Surface Discovered (7 endpoints)',
+            'bucket_revision': 'descubrimiento',
+            'priority': 'low',
+            'verification_status': 'confirmed',
+            'needs_manual_validation': 'false',
+        },
+        {
+            'run_name': 'lab_juice_shop_passive_recon_enum',
+            'title': 'Technology Fingerprint Detected (Angular)',
+            'bucket_revision': 'descubrimiento',
+            'priority': 'low',
+            'verification_status': 'likely',
+            'needs_manual_validation': 'false',
+        },
+        {
+            'run_name': 'lab_juice_shop_passive_recon_enum',
+            'title': 'robots.txt Exposed',
+            'bucket_revision': 'descubrimiento',
+            'priority': 'low',
+            'verification_status': 'likely',
+            'needs_manual_validation': 'false',
         },
     ]
 

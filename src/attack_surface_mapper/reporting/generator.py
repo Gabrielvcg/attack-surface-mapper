@@ -215,7 +215,7 @@ class ReportGenerator:
             needs_manual_validation=sum(
                 1
                 for v in vulns
-                if v.needs_manual_validation or (v.verification_status or '').lower() in {'likely', 'needs_manual_validation'}
+                if v.needs_manual_validation or (v.verification_status or '').lower() == 'needs_manual_validation'
             ),
             confirmed_high_or_critical=sum(
                 1

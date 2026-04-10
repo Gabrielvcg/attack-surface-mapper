@@ -61,11 +61,24 @@ TITLE_RECOMMENDATIONS = {
 
 def infer_kind(vulnerability: Vulnerability) -> str:
     category = (vulnerability.category or '').lower()
-    if category in {'discovery'} or vulnerability.title.startswith('Technology Fingerprint Detected'):
+    if _is_inventory_or_context_finding(vulnerability):
         return 'discovery'
     if category in {'headers', 'tls', 'authentication', 'api', 'panel-exposure', 'web-service', 'network-service', 'secret', 'sensitive-file'}:
         return 'validation'
     return 'other'
+
+
+def _is_inventory_or_context_finding(vulnerability: Vulnerability) -> bool:
+    category = (vulnerability.category or '').lower()
+    title = (vulnerability.title or '').lower()
+    return (
+        category == 'discovery'
+        or title.startswith('technology fingerprint detected')
+        or title.startswith('multiple api endpoints exposed')
+        or title.startswith('protected api surface discovered')
+        or title.startswith('multiple client-side api references observed')
+        or title == 'client-side api reference observed'
+    )
 
 
 def clean_evidence(text: str | None, max_len: int = 280) -> str | None:
@@ -173,34 +186,6 @@ def compute_confidence(vulnerability: Vulnerability) -> str:
     return 'low'
 
 
-def _normalise_validation_state(vulnerability: Vulnerability) -> None:
-    verification = (vulnerability.verification_status or '').lower()
-    confidence = (vulnerability.confidence or '').lower()
-    category = (vulnerability.category or '').lower()
-
-    if verification == 'confirmed':
-        vulnerability.needs_manual_validation = False
-        if confidence == 'low':
-            vulnerability.confidence = 'medium'
-            confidence = 'medium'
-    elif verification in {'likely', 'needs_manual_validation', 'heuristic'}:
-        vulnerability.needs_manual_validation = True
-
-    if category in {'authentication', 'api', 'secret'} and verification != 'confirmed':
-        vulnerability.needs_manual_validation = True
-
-    if confidence in {'low', 'medium'} and category in {'authentication', 'api', 'panel-exposure', 'sensitive-file'} and verification != 'confirmed':
-        vulnerability.needs_manual_validation = True
-
-    if not vulnerability.verification_status:
-        if vulnerability.confidence == 'high' and not vulnerability.needs_manual_validation:
-            vulnerability.verification_status = 'confirmed'
-        elif vulnerability.needs_manual_validation:
-            vulnerability.verification_status = 'needs_manual_validation'
-        else:
-            vulnerability.verification_status = 'likely'
-
-
 def compute_recommendation(vulnerability: Vulnerability) -> str:
     if vulnerability.title.startswith('Technology Fingerprint Detected'):
         return 'Usar el fingerprint como contexto para priorizar rutas, hardening y validaciones específicas del stack detectado.'
@@ -238,6 +223,7 @@ def _normalise_validation_state(vulnerability: Vulnerability) -> None:
     verification = (vulnerability.verification_status or '').lower()
     confidence = (vulnerability.confidence or '').lower()
     category = (vulnerability.category or '').lower()
+    inventory_like = _is_inventory_or_context_finding(vulnerability)
 
     if verification == 'confirmed':
         vulnerability.needs_manual_validation = False
@@ -247,10 +233,12 @@ def _normalise_validation_state(vulnerability: Vulnerability) -> None:
     elif verification in {'likely', 'needs_manual_validation', 'heuristic'}:
         vulnerability.needs_manual_validation = True
 
-    if category in {'authentication', 'api', 'secret'} and verification != 'confirmed':
+    if inventory_like:
+        vulnerability.needs_manual_validation = False
+    elif category in {'authentication', 'api', 'secret'} and verification != 'confirmed':
         vulnerability.needs_manual_validation = True
 
-    if confidence in {'low', 'medium'} and category in {'authentication', 'api', 'panel-exposure', 'sensitive-file'} and verification != 'confirmed':
+    if not inventory_like and confidence in {'low', 'medium'} and category in {'authentication', 'api', 'panel-exposure', 'sensitive-file'} and verification != 'confirmed':
         vulnerability.needs_manual_validation = True
 
     if not vulnerability.verification_status:
