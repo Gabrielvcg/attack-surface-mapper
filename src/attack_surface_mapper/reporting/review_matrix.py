@@ -19,6 +19,10 @@ def review_bucket_for_finding(finding: dict) -> str:
         'openapi specification exposed',
         'api surface exposed',
     }
+    surface_like = title in {
+        'graphql surface exposed',
+        'broad cors policy observed',
+    }
     inventory_like = (
         kind == 'discovery'
         or category == 'discovery'
@@ -31,6 +35,8 @@ def review_bucket_for_finding(finding: dict) -> str:
     if inventory_like:
         return 'descubrimiento'
     if documentation_like:
+        return 'revisar'
+    if surface_like:
         return 'revisar'
     if category == 'headers':
         return 'revisar'

@@ -10,6 +10,7 @@ from statistics import mean
 from typing import Iterable
 
 from attack_surface_mapper.models.vulnerability import Vulnerability
+from attack_surface_mapper.reporting.review_matrix import review_bucket_for_finding
 
 SEVERITY_LABELS = ['critical', 'high', 'medium', 'low', 'info', 'unknown']
 PRIORITY_LABELS = ['critical', 'high', 'medium', 'low']
@@ -121,6 +122,20 @@ def _split_report_groups(vulnerabilities: Iterable[Vulnerability]) -> tuple[list
 
 def _headline_risk_findings(vulnerabilities: Iterable[Vulnerability]) -> list[Vulnerability]:
     items = list(vulnerabilities)
+    prioritised = [
+        vuln
+        for vuln in items
+        if review_bucket_for_finding({
+            'title': vuln.title,
+            'kind': vuln.kind,
+            'category': vuln.category,
+            'verification_status': vuln.verification_status,
+            'confidence': vuln.confidence,
+            'priority': vuln.priority,
+        }) == 'priorizar'
+    ]
+    if prioritised:
+        return prioritised
     preferred = [
         vuln
         for vuln in items

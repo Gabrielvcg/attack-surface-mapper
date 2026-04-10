@@ -236,6 +236,14 @@ class APIValidator(BaseValidator):
             return False, 'low', '; '.join(reasons), 'discarded', title, description, severity
         if baseline_like and score < 4:
             return False, 'low', '; '.join(reasons), 'discarded', title, description, severity
+        if path in {'/swagger', '/swagger-ui', '/api-docs', '/openapi.json'} and score >= 4:
+            confidence = 'high' if score >= 6 else 'medium'
+            reasons.append('documentación api pública: revisar antes de tratarla como riesgo principal')
+            return True, confidence, '; '.join(reasons), 'likely', title, description, severity
+        if path.startswith('/graphql') and score >= 4:
+            confidence = 'high' if graphql_signature == 'strong' else 'medium'
+            reasons.append('superficie graphql pública: requiere evidencia adicional para acceso indebido')
+            return True, confidence, '; '.join(reasons), 'likely', title, description, severity
         if score >= 6:
             return True, 'high', '; '.join(reasons), 'confirmed', title, description, severity
         if score >= 4:
