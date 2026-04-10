@@ -2,6 +2,11 @@
 
 ## v10.22.8 polish
 
+- Introduce una capa de validaciÃ³n explÃ­cita en el modelo de hallazgo con `finding_role`, `validated` y `validation_basis`, separando mejor descubrimiento, candidatos y evidencia validada.
+- Propaga esa semÃ¡ntica a `report.summary.json`, `aggregate_summary.json`, `comparison.json` y la matriz de revisiÃ³n para dejar el output estructurado mÃ¡s estable y mÃ¡s honesto.
+- Mantiene compatibilidad con hallazgos previos o JSON legacy: reporting, agregado y comparaciÃ³n infieren el rol de validaciÃ³n cuando el campo nuevo todavÃ­a no existe.
+- AmplÃ­a el golden set y la exportaciÃ³n de revisiÃ³n con `finding_role`, `validated` y `validation_basis` para afinar falsos positivos con una semÃ¡ntica mÃ¡s clara.
+
 - Conserva el `debug_http_trace` de browser discovery y validación pasiva en una misma ejecución para facilitar análisis de ruido y troubleshooting.
 - Ajusta el resumen ejecutivo para que la nota sobre hallazgos altos/críticos confirmados dependa de los datos reales del run.
 - Amplía el `summary-json` con campos ya existentes del modelo (`kind`, `confidence`, `asset_host`, `asset_port`, `source_count`, `evidence_summary`) para mantener el output más preparado para consumo estructurado futuro.

@@ -9,6 +9,7 @@ PRIORITY_SCORE = {'low': 1, 'medium': 2, 'high': 3, 'critical': 4}
 SEVERITY_SCORE = {'info': 1, 'low': 2, 'medium': 3, 'high': 4, 'critical': 5, 'unknown': 0}
 CONFIDENCE_SCORE = {'low': 1, 'medium': 2, 'high': 3}
 VERIFICATION_SCORE = {'discarded': 0, 'heuristic': 1, 'needs_manual_validation': 2, 'likely': 3, 'confirmed': 4}
+FINDING_ROLE_SCORE = {'discovery': 0, 'candidate': 1, 'validated': 2}
 
 
 def load_previous_scan(path: str | None) -> list[Vulnerability]:
@@ -40,6 +41,9 @@ def _serialise_finding(vulnerability: Vulnerability) -> dict[str, str]:
         'confidence': vulnerability.confidence or '',
         'verification_status': vulnerability.verification_status or '',
         'kind': vulnerability.kind or '',
+        'finding_role': vulnerability.finding_role or '',
+        'validated': str(bool(vulnerability.validated)).lower(),
+        'validation_basis': vulnerability.validation_basis or '',
         'category': vulnerability.category or '',
         'finding_id': vulnerability.finding_id or '',
         'correlation_id': vulnerability.correlation_id or '',
@@ -51,7 +55,8 @@ def _change_direction(previous: Vulnerability, current: Vulnerability) -> str:
     severity_delta = SEVERITY_SCORE.get((current.severity or '').lower(), 0) - SEVERITY_SCORE.get((previous.severity or '').lower(), 0)
     confidence_delta = CONFIDENCE_SCORE.get((current.confidence or '').lower(), 0) - CONFIDENCE_SCORE.get((previous.confidence or '').lower(), 0)
     verification_delta = VERIFICATION_SCORE.get((current.verification_status or '').lower(), 0) - VERIFICATION_SCORE.get((previous.verification_status or '').lower(), 0)
-    combined_delta = priority_delta + severity_delta + confidence_delta + verification_delta
+    role_delta = FINDING_ROLE_SCORE.get((current.finding_role or '').lower(), 0) - FINDING_ROLE_SCORE.get((previous.finding_role or '').lower(), 0)
+    combined_delta = priority_delta + severity_delta + confidence_delta + verification_delta + role_delta
     if combined_delta > 0:
         return 'promoted'
     if combined_delta < 0:
@@ -75,6 +80,7 @@ def compare_scans(current: list[Vulnerability], previous: list[Vulnerability]) -
         'severity': 0,
         'confidence': 0,
         'verification_status': 0,
+        'finding_role': 0,
     }
 
     for key, vulnerability in current_index.items():
@@ -95,6 +101,9 @@ def compare_scans(current: list[Vulnerability], previous: list[Vulnerability]) -
         if (old.verification_status or '') != (vulnerability.verification_status or ''):
             change_types.append('verification_status')
             change_type_counts['verification_status'] += 1
+        if (old.finding_role or '') != (vulnerability.finding_role or ''):
+            change_types.append('finding_role')
+            change_type_counts['finding_role'] += 1
         if not change_types:
             unchanged_count += 1
             continue
@@ -110,6 +119,8 @@ def compare_scans(current: list[Vulnerability], previous: list[Vulnerability]) -
             'current_confidence': vulnerability.confidence or '',
             'previous_verification_status': old.verification_status or '',
             'current_verification_status': vulnerability.verification_status or '',
+            'previous_finding_role': old.finding_role or '',
+            'current_finding_role': vulnerability.finding_role or '',
             'kind': vulnerability.kind or old.kind or '',
             'category': vulnerability.category or old.category or '',
             'change_types': change_types,

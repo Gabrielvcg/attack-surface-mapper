@@ -51,6 +51,31 @@ def _is_ipv4(value: str | None) -> bool:
     return bool(value and _IPV4_RE.match(value))
 
 
+def _finding_role_record(item: dict) -> str:
+    explicit_role = str(item.get('finding_role') or '').lower()
+    if explicit_role:
+        return explicit_role
+    title = str(item.get('title') or '').lower()
+    category = str(item.get('category') or '').lower()
+    kind = str(item.get('kind') or '').lower()
+    verification = str(item.get('verification_status') or '').lower()
+    if (
+        kind == 'discovery'
+        or category == 'discovery'
+        or title.startswith('multiple api endpoints exposed')
+        or title.startswith('protected api surface discovered')
+        or title.startswith('multiple client-side api references observed')
+        or title == 'client-side api reference observed'
+        or title.startswith('technology fingerprint detected')
+    ):
+        return 'discovery'
+    if bool(item.get('validated')) or verification == 'confirmed':
+        return 'validated'
+    if kind == 'validation' or verification in {'likely', 'needs_manual_validation', 'heuristic'}:
+        return 'candidate'
+    return ''
+
+
 def _derive_target_asset_hosts(results: Iterable[ScanResult]) -> dict[str, str | None]:
     mapping: dict[str, str | None] = {}
     for result in results:
@@ -113,8 +138,10 @@ def _network_title_key(vuln) -> str:
 def _is_inventory_like_record(item: dict) -> bool:
     title = str(item.get('title') or '').lower()
     category = str(item.get('category') or '').lower()
+    finding_role = _finding_role_record(item)
     return (
-        category == 'discovery'
+        finding_role == 'discovery'
+        or category == 'discovery'
         or title.startswith('multiple api endpoints exposed')
         or title.startswith('protected api surface discovered')
         or title.startswith('multiple client-side api references observed')
@@ -128,7 +155,7 @@ def _top_finding_bucket(item: dict) -> int:
         return 3
     if str(item.get('category') or '').lower() == 'headers':
         return 2
-    if str(item.get('verification_status') or '').lower() == 'confirmed':
+    if bool(item.get('validated')) or _finding_role_record(item) == 'validated':
         return 0
     return 1
 
@@ -198,6 +225,9 @@ def _build_finding_record(result_target: str, vuln, target_asset_hosts: dict[str
         'severity': vuln.severity,
         'category': vuln.category,
         'kind': vuln.kind,
+        'finding_role': vuln.finding_role,
+        'validated': vuln.validated,
+        'validation_basis': vuln.validation_basis,
         'confidence': vuln.confidence,
         'verification_status': vuln.verification_status,
         'source_count': vuln.source_count,
@@ -250,6 +280,9 @@ def build_aggregate_payload(results: Iterable[ScanResult]) -> dict:
                 record['finding_id'] = vuln.finding_id
                 record['correlation_id'] = vuln.correlation_id
                 record['kind'] = vuln.kind
+                record['finding_role'] = vuln.finding_role
+                record['validated'] = vuln.validated
+                record['validation_basis'] = vuln.validation_basis
                 record['confidence'] = vuln.confidence
                 record['source_count'] = vuln.source_count
                 record['evidence_summary'] = vuln.evidence_summary
@@ -298,6 +331,8 @@ def build_aggregate_payload(results: Iterable[ScanResult]) -> dict:
             'total_targets': total_targets,
             'raw_total_findings': raw_total_findings,
             'total_findings': len(top_findings),
+            'validated_findings': sum(1 for item in top_findings if bool(item.get('validated')) or _finding_role_record(item) == 'validated'),
+            'candidate_findings': sum(1 for item in top_findings if _finding_role_record(item) == 'candidate'),
             'actionable_risk_findings': len(actionable_risk_findings),
             'review_surface_findings': len(review_surface_findings),
             'hygiene_findings': len(hygiene_findings),
@@ -309,6 +344,8 @@ def build_aggregate_payload(results: Iterable[ScanResult]) -> dict:
         'total_targets': total_targets,
         'raw_total_findings': raw_total_findings,
         'total_findings': len(top_findings),
+        'validated_findings': sum(1 for item in top_findings if bool(item.get('validated')) or _finding_role_record(item) == 'validated'),
+        'candidate_findings': sum(1 for item in top_findings if _finding_role_record(item) == 'candidate'),
         'priority_counts': _stable_counts(priority_counter, PRIORITY_LABELS),
         'severity_counts': _stable_counts(severity_counter, SEVERITY_LABELS),
         'category_counts': dict(sorted(category_counter.items(), key=lambda item: (-item[1], item[0]))),
@@ -404,7 +441,7 @@ def write_aggregate_reports(results: Iterable[ScanResult], output_dir: str) -> d
     csv_path = output / 'aggregate_findings.csv'
     with csv_path.open('w', encoding='utf-8', newline='') as handle:
         writer = csv.writer(handle)
-        writer.writerow(['scope', 'targets', 'target_count', 'location', 'target_host_original', 'asset_host', 'asset_host_resolved', 'asset_port', 'finding_id', 'correlation_id', 'title', 'priority', 'severity', 'category', 'verification_status', 'recommendation'])
+        writer.writerow(['scope', 'targets', 'target_count', 'location', 'target_host_original', 'asset_host', 'asset_host_resolved', 'asset_port', 'finding_id', 'correlation_id', 'title', 'priority', 'severity', 'category', 'kind', 'finding_role', 'validated', 'validation_basis', 'verification_status', 'recommendation'])
         for finding in payload['top_findings']:
             writer.writerow([
                 finding.get('scope', ''),
@@ -421,6 +458,10 @@ def write_aggregate_reports(results: Iterable[ScanResult], output_dir: str) -> d
                 finding['priority'],
                 finding['severity'],
                 finding['category'],
+                finding.get('kind', ''),
+                finding.get('finding_role', ''),
+                str(bool(finding.get('validated'))).lower(),
+                finding.get('validation_basis', ''),
                 finding.get('verification_status', ''),
                 finding['recommendation'],
             ])
