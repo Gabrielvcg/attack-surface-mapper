@@ -61,11 +61,38 @@ def _normalise_comparison(comparison: dict | None) -> dict[str, list[dict]]:
     return normalised
 
 
+def _finding_role(vulnerability: Vulnerability) -> str:
+    explicit_role = (vulnerability.finding_role or '').lower()
+    if explicit_role:
+        return explicit_role
+    title = (vulnerability.title or '').lower()
+    category = (vulnerability.category or '').lower()
+    kind = (vulnerability.kind or '').lower()
+    verification = (vulnerability.verification_status or '').lower()
+    if (
+        kind == 'discovery'
+        or category == 'discovery'
+        or title.startswith('multiple api endpoints exposed')
+        or title.startswith('protected api surface discovered')
+        or title.startswith('multiple client-side api references observed')
+        or title == 'client-side api reference observed'
+        or title.startswith('technology fingerprint detected')
+    ):
+        return 'discovery'
+    if bool(vulnerability.validated) or verification == 'confirmed':
+        return 'validated'
+    if kind == 'validation' or verification in {'likely', 'needs_manual_validation', 'heuristic'}:
+        return 'candidate'
+    return ''
+
+
 def _is_inventory_like(vulnerability: Vulnerability) -> bool:
     title = (vulnerability.title or '').lower()
     category = (vulnerability.category or '').lower()
+    finding_role = _finding_role(vulnerability)
     return (
-        category == 'discovery'
+        finding_role == 'discovery'
+        or category == 'discovery'
         or title.startswith('multiple api endpoints exposed')
         or title.startswith('protected api surface discovered')
         or title.startswith('multiple client-side api references observed')
@@ -79,7 +106,7 @@ def _sort_bucket(vulnerability: Vulnerability) -> int:
         return 3
     if (vulnerability.category or '').lower() == 'headers':
         return 2
-    if (vulnerability.verification_status or '').lower() == 'confirmed':
+    if _finding_role(vulnerability) == 'validated' or bool(vulnerability.validated):
         return 0
     return 1
 
@@ -141,6 +168,8 @@ def _headline_risk_findings(vulnerabilities: Iterable[Vulnerability]) -> list[Vu
         if review_bucket_for_finding({
             'title': vuln.title,
             'kind': vuln.kind,
+            'finding_role': vuln.finding_role,
+            'validated': vuln.validated,
             'category': vuln.category,
             'verification_status': vuln.verification_status,
             'confidence': vuln.confidence,
@@ -153,7 +182,7 @@ def _headline_risk_findings(vulnerabilities: Iterable[Vulnerability]) -> list[Vu
         vuln
         for vuln in items
         if (vuln.priority or '').lower() in {'critical', 'high', 'medium'}
-        or (vuln.verification_status or '').lower() == 'confirmed'
+        or _finding_role(vuln) == 'validated'
     ]
     return preferred or items
 
@@ -178,6 +207,8 @@ class ReportStats:
     unique_cwes: list[str]
     needs_manual_validation: int
     confirmed_high_or_critical: int
+    validated_findings: int
+    candidate_findings: int
     application_findings: int
     review_surface_findings: int
     hygiene_findings: int
@@ -220,9 +251,11 @@ class ReportGenerator:
             confirmed_high_or_critical=sum(
                 1
                 for v in vulns
-                if (v.verification_status or '').lower() == 'confirmed'
+                if _finding_role(v) == 'validated'
                 and (v.priority or v.severity or '').lower() in {'critical', 'high'}
             ),
+            validated_findings=sum(1 for v in vulns if _finding_role(v) == 'validated' or bool(v.validated)),
+            candidate_findings=sum(1 for v in vulns if _finding_role(v) == 'candidate'),
             application_findings=len(application_findings),
             review_surface_findings=len(review_surface_findings),
             hygiene_findings=len(hygiene_findings),
@@ -244,6 +277,7 @@ class ReportGenerator:
             impact_note = 'No se observaron hallazgos de prioridad alta o crítica en esta ejecución.'
         return (
             f'Se identificaron {stats.total_findings} hallazgos correlacionados. '
+            f'Estado de validación: {stats.validated_findings} validados, {stats.candidate_findings} candidatos, {stats.discovery_findings} de descubrimiento/contexto. '
             f'Riesgo accionable: {stats.application_findings}; superficie a revisar: {stats.review_surface_findings}; higiene/endurecimiento: {stats.hygiene_findings}; descubrimiento: {stats.discovery_findings}. '
             f'Prioridades: {priorities}. Severidades: {severities}. '
             f'Hallazgos que requieren validación manual: {stats.needs_manual_validation}. '
@@ -304,12 +338,12 @@ class ReportGenerator:
         with file_path.open('w', encoding='utf-8', newline='') as handle:
             writer = csv.writer(handle)
             writer.writerow([
-                'finding_id', 'correlation_id', 'source', 'severity', 'priority', 'priority_reason', 'category', 'kind', 'confidence', 'verification_status', 'title', 'target', 'target_host_original', 'asset_host', 'asset_host_resolved', 'asset_port', 'description',
+                'finding_id', 'correlation_id', 'source', 'severity', 'priority', 'priority_reason', 'category', 'kind', 'finding_role', 'validated', 'validation_basis', 'confidence', 'verification_status', 'title', 'target', 'target_host_original', 'asset_host', 'asset_host_resolved', 'asset_port', 'description',
                 'evidence_summary', 'cve', 'cwe', 'cvss_score', 'source_count', 'related_sources', 'recommendation'
             ])
             for vuln in sorted_vulns:
                 writer.writerow([
-                    vuln.finding_id or '', vuln.correlation_id or '', vuln.source, vuln.severity, vuln.priority or '', vuln.priority_reason or '', vuln.category or '', vuln.kind or '', vuln.confidence or '', vuln.verification_status or '',
+                    vuln.finding_id or '', vuln.correlation_id or '', vuln.source, vuln.severity, vuln.priority or '', vuln.priority_reason or '', vuln.category or '', vuln.kind or '', vuln.finding_role or '', str(bool(vuln.validated)).lower(), vuln.validation_basis or '', vuln.confidence or '', vuln.verification_status or '',
                     vuln.title, vuln.target, vuln.target_host_original or '', vuln.asset_host or '', vuln.asset_host_resolved or '', vuln.asset_port or '', vuln.description, vuln.evidence_summary or '',
                     ', '.join(vuln.cve), ', '.join(vuln.cwe), vuln.cvss_score if vuln.cvss_score is not None else '',
                     vuln.source_count, ', '.join(vuln.related_sources), vuln.recommendation or ''
@@ -322,6 +356,9 @@ class ReportGenerator:
             '',
             f'- **Prioridad:** {vuln.priority or "N/A"}',
             f'- **Motivo de prioridad:** {vuln.priority_reason or "N/A"}',
+            f'- **Rol del hallazgo:** {vuln.finding_role or "N/A"}',
+            f'- **Validado:** {"sí" if vuln.validated else "no"}',
+            f'- **Base de validación:** {vuln.validation_basis or "N/A"}',
             f'- **Severidad:** {vuln.severity}',
             f'- **Categoría:** {vuln.category or "N/A"}',
             f'- **Confianza:** {vuln.confidence or "N/A"}',
@@ -348,12 +385,12 @@ class ReportGenerator:
         stats = self.compute_stats(sorted_vulns)
         comparison_payload = _normalise_comparison(comparison) if comparison else {}
         application_findings, review_surface_findings, hygiene_findings, network_services, discovery_like = _split_report_groups(sorted_vulns)
-        confirmed = [v for v in application_findings if (v.verification_status or '').lower() == 'confirmed']
-        plausible = [v for v in application_findings if (v.verification_status or '').lower() != 'confirmed']
-        review_confirmed = [v for v in review_surface_findings if (v.verification_status or '').lower() == 'confirmed']
-        review_plausible = [v for v in review_surface_findings if (v.verification_status or '').lower() != 'confirmed']
-        hygiene_confirmed = [v for v in hygiene_findings if (v.verification_status or '').lower() == 'confirmed']
-        hygiene_plausible = [v for v in hygiene_findings if (v.verification_status or '').lower() != 'confirmed']
+        confirmed = [v for v in application_findings if _finding_role(v) == 'validated']
+        plausible = [v for v in application_findings if _finding_role(v) != 'validated']
+        review_confirmed = [v for v in review_surface_findings if _finding_role(v) == 'validated']
+        review_plausible = [v for v in review_surface_findings if _finding_role(v) != 'validated']
+        hygiene_confirmed = [v for v in hygiene_findings if _finding_role(v) == 'validated']
+        hygiene_plausible = [v for v in hygiene_findings if _finding_role(v) != 'validated']
 
         lines = [
             f'# {self.title}',

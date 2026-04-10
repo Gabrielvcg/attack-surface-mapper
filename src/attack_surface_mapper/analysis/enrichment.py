@@ -91,6 +91,49 @@ def _base_priority(vulnerability: Vulnerability) -> int:
     return SEVERITY_SCORE.get((vulnerability.severity or 'unknown').lower(), 0)
 
 
+def _derive_validation_basis(vulnerability: Vulnerability) -> str:
+    verification = (vulnerability.verification_status or '').lower()
+    category = (vulnerability.category or '').lower()
+    title = (vulnerability.title or '').lower()
+
+    if _is_inventory_or_context_finding(vulnerability):
+        return 'context-only'
+    if verification == 'discarded':
+        return 'discarded-signal'
+    if verification == 'confirmed' and vulnerability.source_count > 1:
+        return 'correlated-evidence'
+    if vulnerability.source == 'nuclei':
+        return 'template-evidence'
+    if category in {'headers', 'tls'} or title.startswith('cookie without '):
+        return 'configuration-evidence'
+    if verification == 'confirmed':
+        return 'response-evidence'
+    return 'heuristic-evidence'
+
+
+def _apply_validation_model(vulnerability: Vulnerability) -> None:
+    kind = vulnerability.kind or infer_kind(vulnerability)
+    verification = (vulnerability.verification_status or '').lower()
+
+    vulnerability.kind = kind
+    vulnerability.validation_basis = _derive_validation_basis(vulnerability)
+
+    if kind == 'discovery' or _is_inventory_or_context_finding(vulnerability):
+        vulnerability.finding_role = 'discovery'
+        vulnerability.validated = False
+        vulnerability.needs_manual_validation = False
+        return
+
+    if verification == 'confirmed':
+        vulnerability.finding_role = 'validated'
+        vulnerability.validated = True
+        vulnerability.needs_manual_validation = False
+        return
+
+    vulnerability.finding_role = 'candidate'
+    vulnerability.validated = False
+
+
 def compute_priority(vulnerability: Vulnerability) -> tuple[str, str]:
     score = _base_priority(vulnerability)
     reasons: list[str] = [f'severidad base={vulnerability.severity.lower()}']
@@ -99,6 +142,7 @@ def compute_priority(vulnerability: Vulnerability) -> tuple[str, str]:
     title = (vulnerability.title or '').lower()
     confidence = (vulnerability.confidence or '').lower()
     verification = (vulnerability.verification_status or '').lower()
+    finding_role = (vulnerability.finding_role or '').lower()
 
     if category in {'secret', 'authentication', 'database', 'message-broker'}:
         score += 1
@@ -112,9 +156,9 @@ def compute_priority(vulnerability: Vulnerability) -> tuple[str, str]:
     if vulnerability.cvss_score is not None and vulnerability.cvss_score >= 7:
         score += 1
         reasons.append(f'cvss elevado={vulnerability.cvss_score}')
-    if verification == 'confirmed' and category not in {'headers', 'discovery'} and (vulnerability.severity or '').lower() not in {'low', 'info'}:
+    if finding_role == 'validated' and category not in {'headers', 'discovery'} and (vulnerability.severity or '').lower() not in {'low', 'info'}:
         score += 1
-        reasons.append('hallazgo confirmado')
+        reasons.append('hallazgo validado')
     if vulnerability.source_count > 1 and verification == 'confirmed':
         score += 1
         reasons.append('múltiples fuentes correlacionadas con confirmación')
@@ -132,6 +176,9 @@ def compute_priority(vulnerability: Vulnerability) -> tuple[str, str]:
     if verification in {'likely', 'heuristic', 'needs_manual_validation'}:
         score -= 1
         reasons.append(f'validación={verification}')
+    if finding_role == 'candidate':
+        score = min(score, 4)
+        reasons.append('hallazgo candidato pendiente de validación')
     if confidence == 'low':
         score -= 2
         reasons.append('confianza baja')
@@ -155,9 +202,14 @@ def compute_priority(vulnerability: Vulnerability) -> tuple[str, str]:
         max_score = 4 if verification == 'confirmed' and confidence == 'high' else 3
         score = min(score, max_score)
         reasons.append('inventario de múltiples endpoints api')
-    if category == 'discovery':
-        score = 1
-        reasons.append('hallazgo de descubrimiento, impacto limitado')
+    if finding_role == 'discovery' or category == 'discovery':
+        if title.startswith('multiple api endpoints exposed'):
+            score = min(score, 3)
+            score = max(score, 2)
+            reasons.append('inventario api amplio, prioridad de descubrimiento acotada')
+        else:
+            score = 1
+            reasons.append('hallazgo de descubrimiento, impacto limitado')
     if vulnerability.source == 'nuclei' and ('epmd' in target or 'rabbit' in (vulnerability.evidence_summary or '').lower() or 'erlang port mapper' in (vulnerability.title or '').lower()):
         score = max(score, 2)
         score = min(score, 3)
@@ -238,7 +290,13 @@ def _normalise_validation_state(vulnerability: Vulnerability) -> None:
     elif category in {'authentication', 'api', 'secret'} and verification != 'confirmed':
         vulnerability.needs_manual_validation = True
 
-    if not inventory_like and confidence in {'low', 'medium'} and category in {'authentication', 'api', 'panel-exposure', 'sensitive-file'} and verification != 'confirmed':
+    if (
+        not inventory_like
+        and vulnerability.source != 'nuclei'
+        and confidence in {'low', 'medium'}
+        and category in {'authentication', 'api', 'panel-exposure', 'sensitive-file'}
+        and verification != 'confirmed'
+    ):
         vulnerability.needs_manual_validation = True
 
     if not vulnerability.verification_status:
@@ -256,11 +314,12 @@ def enrich_vulnerabilities(vulnerabilities: list[Vulnerability]) -> list[Vulnera
         if vulnerability.category == 'discovery' and (vulnerability.verification_status or '').lower() == 'confirmed':
             vulnerability.confidence = 'high'
         _normalise_validation_state(vulnerability)
+        vulnerability.kind = infer_kind(vulnerability)
+        _apply_validation_model(vulnerability)
         vulnerability.priority, vulnerability.priority_reason = compute_priority(vulnerability)
         vulnerability.recommendation = vulnerability.recommendation or compute_recommendation(vulnerability)
         vulnerability.evidence_summary = clean_evidence(vulnerability.evidence_summary or build_evidence_summary(vulnerability))
         vulnerability.evidence = clean_evidence(vulnerability.evidence, max_len=1200)
-        vulnerability.kind = infer_kind(vulnerability)
         asset = normalize_asset(vulnerability.target or vulnerability.matched_at or '')
         vulnerability.target_host_original = asset.get('target_host_original')
         vulnerability.asset_host = asset.get('asset_host')
@@ -272,7 +331,6 @@ def enrich_vulnerabilities(vulnerabilities: list[Vulnerability]) -> list[Vulnera
             vulnerability.asset_host_resolved = str(vulnerability.host).lower()
         if vulnerability.port and not vulnerability.asset_port:
             vulnerability.asset_port = vulnerability.port
-        _normalise_validation_state(vulnerability)
         vulnerability.finding_id = _stable_identifier(
             'finding',
             *(vulnerability.dedup_key()),

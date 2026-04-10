@@ -9,10 +9,12 @@ from typing import Iterable
 def review_bucket_for_finding(finding: dict) -> str:
     title = str(finding.get('title') or '').lower()
     kind = str(finding.get('kind') or '').lower()
+    finding_role = str(finding.get('finding_role') or '').lower()
     category = str(finding.get('category') or '').lower()
     verification = str(finding.get('verification_status') or '').lower()
     confidence = str(finding.get('confidence') or '').lower()
     priority = str(finding.get('priority') or '').lower()
+    validated = str(finding.get('validated') or '').lower() in {'true', '1', 'yes', 'si', 'sí'}
 
     documentation_like = title in {
         'swagger ui exposed',
@@ -24,7 +26,8 @@ def review_bucket_for_finding(finding: dict) -> str:
         'broad cors policy observed',
     }
     inventory_like = (
-        kind == 'discovery'
+        finding_role == 'discovery'
+        or kind == 'discovery'
         or category == 'discovery'
         or title.startswith('multiple api endpoints exposed')
         or title.startswith('protected api surface discovered')
@@ -40,7 +43,9 @@ def review_bucket_for_finding(finding: dict) -> str:
         return 'revisar'
     if category == 'headers':
         return 'revisar'
-    if verification == 'confirmed' and confidence == 'high' and priority in {'medium', 'high', 'critical'}:
+    if finding_role == 'candidate':
+        return 'revisar'
+    if (validated or verification == 'confirmed') and confidence == 'high' and priority in {'medium', 'high', 'critical'}:
         return 'priorizar'
     if verification in {'confirmed', 'likely', 'needs_manual_validation'}:
         return 'revisar'
@@ -135,6 +140,9 @@ def build_review_rows(run_dirs: Iterable[str | Path]) -> list[dict[str, str]]:
                     'title': str(finding.get('title') or ''),
                     'category': str(finding.get('category') or ''),
                     'kind': str(finding.get('kind') or ''),
+                    'finding_role': str(finding.get('finding_role') or ''),
+                    'validated': 'true' if bool(finding.get('validated')) else 'false',
+                    'validation_basis': str(finding.get('validation_basis') or ''),
                     'priority': str(finding.get('priority') or ''),
                     'severity': str(finding.get('severity') or ''),
                     'confidence': str(finding.get('confidence') or ''),
@@ -163,6 +171,9 @@ def write_review_matrix(rows: Iterable[dict[str, str]], output_path: str | Path)
         'title',
         'category',
         'kind',
+        'finding_role',
+        'validated',
+        'validation_basis',
         'priority',
         'severity',
         'confidence',
