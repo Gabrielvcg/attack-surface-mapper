@@ -14,6 +14,8 @@ def test_review_bucket_prefers_discovery_and_confirmed_validation() -> None:
     assert review_bucket_for_finding({'kind': 'validation', 'verification_status': 'likely', 'confidence': 'medium'}) == 'revisar'
     assert review_bucket_for_finding({'kind': 'validation', 'category': 'headers', 'verification_status': 'confirmed', 'confidence': 'high', 'priority': 'medium'}) == 'revisar'
     assert review_bucket_for_finding({'kind': 'validation', 'category': 'api', 'title': 'Swagger UI Exposed', 'verification_status': 'confirmed', 'confidence': 'high', 'priority': 'medium'}) == 'revisar'
+    assert review_bucket_for_finding({'kind': 'validation', 'category': 'api', 'title': 'GraphQL Surface Exposed', 'verification_status': 'likely', 'confidence': 'high', 'priority': 'medium'}) == 'revisar'
+    assert review_bucket_for_finding({'kind': 'validation', 'category': 'api', 'title': 'Broad CORS Policy Observed', 'verification_status': 'likely', 'confidence': 'medium', 'priority': 'low'}) == 'revisar'
     assert review_bucket_for_finding({'kind': 'validation', 'category': 'api', 'title': 'Multiple API Endpoints Exposed (10)', 'verification_status': 'likely', 'confidence': 'medium', 'priority': 'medium'}) == 'descubrimiento'
 
 
@@ -69,7 +71,7 @@ def test_build_review_rows_reads_run_manifest_and_vulnerabilities(tmp_path: Path
     assert rows[0]['run_name'] == 'lab_demo'
     assert rows[0]['profile'] == 'passive-recon-safe'
     assert rows[0]['finding_id'] == 'finding-1'
-    assert rows[0]['bucket_revision'] == 'priorizar'
+    assert rows[0]['bucket_revision'] == 'revisar'
     assert rows[0]['etiqueta_analista'] == ''
 
 
@@ -94,7 +96,7 @@ def test_write_review_matrix_creates_csv_with_expected_columns(tmp_path: Path) -
             'asset_host': 'target.example',
             'asset_port': '443',
             'evidence_summary': 'graphql marker',
-            'bucket_revision': 'priorizar',
+            'bucket_revision': 'revisar',
             'etiqueta_analista': '',
             'notas': '',
         }
@@ -105,5 +107,5 @@ def test_write_review_matrix_creates_csv_with_expected_columns(tmp_path: Path) -
         rows = list(reader)
 
     assert rows[0]['run_name'] == 'lab_demo'
-    assert rows[0]['bucket_revision'] == 'priorizar'
+    assert rows[0]['bucket_revision'] == 'revisar'
     assert rows[0]['etiqueta_analista'] == ''
