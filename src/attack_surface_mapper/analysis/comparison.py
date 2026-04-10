@@ -37,6 +37,7 @@ def _serialise_finding(vulnerability: Vulnerability) -> dict[str, str]:
         'title': vulnerability.title,
         'target': vulnerability.target,
         'priority': vulnerability.priority or '',
+        'priority_score': vulnerability.priority_score if vulnerability.priority_score is not None else '',
         'severity': vulnerability.severity or '',
         'confidence': vulnerability.confidence or '',
         'verification_status': vulnerability.verification_status or '',
@@ -52,11 +53,14 @@ def _serialise_finding(vulnerability: Vulnerability) -> dict[str, str]:
 
 def _change_direction(previous: Vulnerability, current: Vulnerability) -> str:
     priority_delta = PRIORITY_SCORE.get((current.priority or '').lower(), 0) - PRIORITY_SCORE.get((previous.priority or '').lower(), 0)
+    numeric_priority_delta = int(current.priority_score or 0) - int(previous.priority_score or 0)
     severity_delta = SEVERITY_SCORE.get((current.severity or '').lower(), 0) - SEVERITY_SCORE.get((previous.severity or '').lower(), 0)
     confidence_delta = CONFIDENCE_SCORE.get((current.confidence or '').lower(), 0) - CONFIDENCE_SCORE.get((previous.confidence or '').lower(), 0)
     verification_delta = VERIFICATION_SCORE.get((current.verification_status or '').lower(), 0) - VERIFICATION_SCORE.get((previous.verification_status or '').lower(), 0)
     role_delta = FINDING_ROLE_SCORE.get((current.finding_role or '').lower(), 0) - FINDING_ROLE_SCORE.get((previous.finding_role or '').lower(), 0)
     combined_delta = priority_delta + severity_delta + confidence_delta + verification_delta + role_delta
+    if combined_delta == 0:
+        combined_delta = numeric_priority_delta
     if combined_delta > 0:
         return 'promoted'
     if combined_delta < 0:
@@ -77,6 +81,7 @@ def compare_scans(current: list[Vulnerability], previous: list[Vulnerability]) -
     unchanged_count = 0
     change_type_counts = {
         'priority': 0,
+        'priority_score': 0,
         'severity': 0,
         'confidence': 0,
         'verification_status': 0,
@@ -92,6 +97,9 @@ def compare_scans(current: list[Vulnerability], previous: list[Vulnerability]) -
         if (old.priority or '') != (vulnerability.priority or ''):
             change_types.append('priority')
             change_type_counts['priority'] += 1
+        if int(old.priority_score or 0) != int(vulnerability.priority_score or 0):
+            change_types.append('priority_score')
+            change_type_counts['priority_score'] += 1
         if (old.severity or '') != (vulnerability.severity or ''):
             change_types.append('severity')
             change_type_counts['severity'] += 1
@@ -113,6 +121,8 @@ def compare_scans(current: list[Vulnerability], previous: list[Vulnerability]) -
             'target': vulnerability.target,
             'previous_priority': old.priority or '',
             'current_priority': vulnerability.priority or '',
+            'previous_priority_score': int(old.priority_score or 0),
+            'current_priority_score': int(vulnerability.priority_score or 0),
             'previous_severity': old.severity or '',
             'current_severity': vulnerability.severity or '',
             'previous_confidence': old.confidence or '',

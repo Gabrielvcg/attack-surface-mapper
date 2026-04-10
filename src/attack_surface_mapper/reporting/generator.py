@@ -116,6 +116,7 @@ def _report_sort_key(vulnerability: Vulnerability) -> tuple:
     severity_order = {'critical': 0, 'high': 1, 'medium': 2, 'low': 3, 'info': 4, 'unknown': 5, None: 6}
     return (
         priority_order.get(vulnerability.priority, 4),
+        -(vulnerability.priority_score or 0),
         _sort_bucket(vulnerability),
         VERIFICATION_ORDER.get((vulnerability.verification_status or '').lower(), 5),
         CATEGORY_ORDER.get((vulnerability.category or '').lower(), 98),
@@ -205,6 +206,7 @@ class ReportStats:
     average_cvss: float | None
     unique_cves: list[str]
     unique_cwes: list[str]
+    average_priority_score: float | None
     needs_manual_validation: int
     confirmed_high_or_critical: int
     validated_findings: int
@@ -241,6 +243,7 @@ class ReportGenerator:
             category_counts=dict(sorted(category_counter.items(), key=lambda item: (-item[1], item[0]))),
             source_counts=dict(sorted(source_counter.items(), key=lambda item: (-item[1], item[0]))),
             average_cvss=round(mean(cvss_values), 2) if cvss_values else None,
+            average_priority_score=round(mean([v.priority_score for v in vulns if v.priority_score is not None]), 1) if any(v.priority_score is not None for v in vulns) else None,
             unique_cves=unique_cves,
             unique_cwes=unique_cwes,
             needs_manual_validation=sum(
@@ -305,6 +308,7 @@ class ReportGenerator:
         comparison_payload = _normalise_comparison(comparison)
         return {
             'schema_version': FINDING_SCHEMA_VERSION,
+            'scoring_version': max({v.scoring_version for v in sorted_vulns if v.scoring_version} or {FINDING_SCHEMA_VERSION}),
             'finding_contract': Vulnerability.contract_metadata(),
             'title': self.title,
             'target': target,
@@ -338,12 +342,12 @@ class ReportGenerator:
         with file_path.open('w', encoding='utf-8', newline='') as handle:
             writer = csv.writer(handle)
             writer.writerow([
-                'finding_id', 'correlation_id', 'source', 'severity', 'priority', 'priority_reason', 'category', 'kind', 'finding_role', 'validated', 'validation_basis', 'confidence', 'verification_status', 'title', 'target', 'target_host_original', 'asset_host', 'asset_host_resolved', 'asset_port', 'description',
+                'finding_id', 'correlation_id', 'source', 'severity', 'priority', 'priority_score', 'scoring_version', 'priority_reason', 'category', 'kind', 'finding_role', 'validated', 'validation_basis', 'confidence', 'verification_status', 'title', 'target', 'target_host_original', 'asset_host', 'asset_host_resolved', 'asset_port', 'description',
                 'evidence_summary', 'cve', 'cwe', 'cvss_score', 'source_count', 'related_sources', 'recommendation'
             ])
             for vuln in sorted_vulns:
                 writer.writerow([
-                    vuln.finding_id or '', vuln.correlation_id or '', vuln.source, vuln.severity, vuln.priority or '', vuln.priority_reason or '', vuln.category or '', vuln.kind or '', vuln.finding_role or '', str(bool(vuln.validated)).lower(), vuln.validation_basis or '', vuln.confidence or '', vuln.verification_status or '',
+                    vuln.finding_id or '', vuln.correlation_id or '', vuln.source, vuln.severity, vuln.priority or '', vuln.priority_score if vuln.priority_score is not None else '', vuln.scoring_version or '', vuln.priority_reason or '', vuln.category or '', vuln.kind or '', vuln.finding_role or '', str(bool(vuln.validated)).lower(), vuln.validation_basis or '', vuln.confidence or '', vuln.verification_status or '',
                     vuln.title, vuln.target, vuln.target_host_original or '', vuln.asset_host or '', vuln.asset_host_resolved or '', vuln.asset_port or '', vuln.description, vuln.evidence_summary or '',
                     ', '.join(vuln.cve), ', '.join(vuln.cwe), vuln.cvss_score if vuln.cvss_score is not None else '',
                     vuln.source_count, ', '.join(vuln.related_sources), vuln.recommendation or ''
@@ -355,6 +359,7 @@ class ReportGenerator:
             f'### [{label}] {vuln.title}',
             '',
             f'- **Prioridad:** {vuln.priority or "N/A"}',
+            f'- **Score de prioridad:** {vuln.priority_score if vuln.priority_score is not None else "N/A"}',
             f'- **Motivo de prioridad:** {vuln.priority_reason or "N/A"}',
             f'- **Rol del hallazgo:** {vuln.finding_role or "N/A"}',
             f'- **Validado:** {"sí" if vuln.validated else "no"}',
@@ -470,6 +475,7 @@ class ReportGenerator:
             findings.append(
                 f"<section class='finding'><h3>{html.escape(vuln.title)}</h3>"
                 f"<p><strong>Prioridad:</strong> {html.escape(vuln.priority or 'N/A')} | <strong>Severidad:</strong> {html.escape(vuln.severity)}</p>"
+                f"<p><strong>Score de prioridad:</strong> {html.escape(str(vuln.priority_score) if vuln.priority_score is not None else 'N/A')} | <strong>Versión de scoring:</strong> {html.escape(vuln.scoring_version or 'N/A')}</p>"
                 f"<p><strong>Motivo de prioridad:</strong> {html.escape(vuln.priority_reason or 'N/A')}</p>"
                 f"<p><strong>Categoría:</strong> {html.escape(vuln.category or 'N/A')} | <strong>Confianza:</strong> {html.escape(vuln.confidence or 'N/A')} | <strong>Verificación:</strong> {html.escape(vuln.verification_status or 'N/A')}</p>"
                 f"<p><strong>Target:</strong> <code>{html.escape(vuln.target)}</code></p>"
