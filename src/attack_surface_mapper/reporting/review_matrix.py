@@ -14,6 +14,11 @@ def review_bucket_for_finding(finding: dict) -> str:
     confidence = str(finding.get('confidence') or '').lower()
     priority = str(finding.get('priority') or '').lower()
 
+    documentation_like = title in {
+        'swagger ui exposed',
+        'openapi specification exposed',
+        'api surface exposed',
+    }
     inventory_like = (
         kind == 'discovery'
         or category == 'discovery'
@@ -25,6 +30,8 @@ def review_bucket_for_finding(finding: dict) -> str:
     )
     if inventory_like:
         return 'descubrimiento'
+    if documentation_like:
+        return 'revisar'
     if category == 'headers':
         return 'revisar'
     if verification == 'confirmed' and confidence == 'high' and priority in {'medium', 'high', 'critical'}:

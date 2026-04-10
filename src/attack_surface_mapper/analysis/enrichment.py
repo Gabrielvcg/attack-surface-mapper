@@ -129,8 +129,7 @@ def compute_priority(vulnerability: Vulnerability) -> tuple[str, str]:
         score = min(score, 1)
         reasons.append('cabecera de bajo impacto')
     if title in {'swagger ui exposed', 'openapi specification exposed', 'api surface exposed'}:
-        max_score = 4 if verification == 'confirmed' and confidence == 'high' else 3
-        score = min(score, max_score)
+        score = min(score, 3)
         reasons.append('documentación o superficie api: prioridad acotada')
     if title == 'graphql surface exposed':
         max_score = 4 if verification == 'confirmed' and confidence == 'high' else 3

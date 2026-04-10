@@ -270,7 +270,7 @@ def test_confirmed_swagger_documentation_does_not_escalate_to_critical_priority(
 
     enrich_vulnerabilities([vuln])
 
-    assert vuln.priority == 'high'
+    assert vuln.priority == 'medium'
 
 
 def test_likely_graphql_without_auth_stays_below_high_priority() -> None:
