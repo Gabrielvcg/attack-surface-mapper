@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Iterable
 
 from attack_surface_mapper.orchestrator import ScanResult
+from attack_surface_mapper.models.vulnerability import Vulnerability
+from attack_surface_mapper.reporting.review_matrix import review_bucket_for_finding
 
 
 NETWORK_DISCOVERY_CATEGORIES = {'network-service', 'database', 'remote-access', 'message-broker', 'admin-surface', 'web-service', 'file-transfer', 'search-service'}
@@ -129,6 +131,33 @@ def _top_finding_bucket(item: dict) -> int:
     if str(item.get('verification_status') or '').lower() == 'confirmed':
         return 0
     return 1
+
+
+def _split_aggregate_findings(items: list[dict]) -> tuple[list[dict], list[dict], list[dict], list[dict], list[dict]]:
+    actionable_risk: list[dict] = []
+    review_surface: list[dict] = []
+    hygiene: list[dict] = []
+    network: list[dict] = []
+    discovery: list[dict] = []
+    for item in items:
+        category = str(item.get('category') or '').lower()
+        if category in NETWORK_DISCOVERY_CATEGORIES:
+            network.append(item)
+            continue
+        if category == 'discovery':
+            discovery.append(item)
+            continue
+        if category in {'headers', 'tls'}:
+            hygiene.append(item)
+            continue
+        bucket = review_bucket_for_finding(item)
+        if bucket == 'priorizar':
+            actionable_risk.append(item)
+        elif bucket == 'descubrimiento':
+            discovery.append(item)
+        else:
+            review_surface.append(item)
+    return actionable_risk, review_surface, hygiene, network, discovery
 
 
 def _top_finding_sort_key(item: dict) -> tuple:
@@ -261,12 +290,18 @@ def build_aggregate_payload(results: Iterable[ScanResult]) -> dict:
     per_target.sort(key=lambda item: item['target'])
     shared_asset_findings = [f for f in top_findings if f.get('scope') == 'shared-host']
     target_specific_findings = [f for f in top_findings if f.get('scope') != 'shared-host']
+    actionable_risk_findings, review_surface_findings, hygiene_findings, network_findings, discovery_findings = _split_aggregate_findings(target_specific_findings)
     return {
         'schema_version': '1.0',
+        'finding_contract': Vulnerability.contract_metadata(),
         'summary': {
             'total_targets': total_targets,
             'raw_total_findings': raw_total_findings,
             'total_findings': len(top_findings),
+            'actionable_risk_findings': len(actionable_risk_findings),
+            'review_surface_findings': len(review_surface_findings),
+            'hygiene_findings': len(hygiene_findings),
+            'discovery_findings': len(discovery_findings),
             'priority_counts': _stable_counts(priority_counter, PRIORITY_LABELS),
             'severity_counts': _stable_counts(severity_counter, SEVERITY_LABELS),
             'category_counts': dict(sorted(category_counter.items(), key=lambda item: (-item[1], item[0]))),
@@ -280,6 +315,10 @@ def build_aggregate_payload(results: Iterable[ScanResult]) -> dict:
         'per_target': per_target,
         'shared_asset_findings': shared_asset_findings[:50],
         'target_specific_findings': target_specific_findings[:50],
+        'top_risk_findings': actionable_risk_findings[:25],
+        'top_review_findings': review_surface_findings[:25],
+        'top_hygiene_findings': hygiene_findings[:25],
+        'top_discovery_findings': discovery_findings[:25],
         'top_findings': top_findings[:50],
         'target_asset_hosts': target_asset_hosts,
     }
@@ -295,6 +334,11 @@ def write_aggregate_reports(results: Iterable[ScanResult], output_dir: str) -> d
     summary_json.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding='utf-8')
 
     md = output / 'aggregate_report.md'
+    vuln_findings = payload['top_risk_findings']
+    review_surface_findings = payload['top_review_findings']
+    hygiene_findings = payload['top_hygiene_findings']
+    network_findings = [f for f in payload['target_specific_findings'] if f.get('category') in NETWORK_DISCOVERY_CATEGORIES]
+    discovery_findings = payload['top_discovery_findings']
     lines = [
         '# Informe agregado de batch scan',
         '',
@@ -310,15 +354,26 @@ def write_aggregate_reports(results: Iterable[ScanResult], output_dir: str) -> d
     for item in payload['per_target']:
         lines.append(f"- **{item['target']}**: {item['findings']} hallazgos, prioridades {item['priorities']}")
 
-    vuln_findings = [f for f in payload['target_specific_findings'] if f.get('category') not in NETWORK_DISCOVERY_CATEGORIES and f.get('category') != 'discovery']
-    network_findings = [f for f in payload['target_specific_findings'] if f.get('category') in NETWORK_DISCOVERY_CATEGORIES]
-    discovery_findings = [f for f in payload['target_specific_findings'] if f.get('category') == 'discovery']
     shared_assets = [f for f in payload['shared_asset_findings'] if f.get('category') in NETWORK_DISCOVERY_CATEGORIES]
 
     lines += ['', '## Vulnerabilidades y misconfiguraciones más relevantes', '']
     if not vuln_findings:
         lines.append('- No se detectaron vulnerabilidades o misconfiguraciones relevantes en el agregado.')
     for finding in vuln_findings:
+        suffix = f" | targets: {finding['target_labels']}" if finding.get('target_labels') else ''
+        lines.append(f"- **{finding['priority'] or finding['severity']}** | `{finding['location']}` | {finding['title']} ({finding['category']}){suffix}")
+
+    lines += ['', '## Superficie pública a revisar', '']
+    if not review_surface_findings:
+        lines.append('- No se detectó superficie pública relevante pendiente de revisión manual en el agregado.')
+    for finding in review_surface_findings:
+        suffix = f" | targets: {finding['target_labels']}" if finding.get('target_labels') else ''
+        lines.append(f"- **{finding['priority'] or finding['severity']}** | `{finding['location']}` | {finding['title']} ({finding['category']}){suffix}")
+
+    lines += ['', '## Higiene y endurecimiento', '']
+    if not hygiene_findings:
+        lines.append('- No se detectaron hallazgos adicionales de higiene o endurecimiento en el agregado.')
+    for finding in hygiene_findings:
         suffix = f" | targets: {finding['target_labels']}" if finding.get('target_labels') else ''
         lines.append(f"- **{finding['priority'] or finding['severity']}** | `{finding['location']}` | {finding['title']} ({finding['category']}){suffix}")
 

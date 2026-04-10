@@ -5,6 +5,7 @@ param(
     [switch]$IncludeEnum,
     [int]$MinFindings = 1,
     [string]$ReviewMatrixOutput = 'reviews/lab_findings_review.csv',
+    [string]$ReviewGoldenSet = 'tests/data/lab_review_golden_set.json',
     [switch]$KeepLabsRunning
 )
 
@@ -150,6 +151,29 @@ function Export-ReviewMatrix {
     Write-Host "Matriz de revisión exportada: $matrixPath" -ForegroundColor Green
 }
 
+function Assert-ReviewGoldenSet {
+    param(
+        [string]$MatrixPath,
+        [string]$GoldenSetPath
+    )
+
+    $resolvedGoldenSet = Join-Path $workspace ($GoldenSetPath -replace '/', '\')
+    if (-not (Test-Path $resolvedGoldenSet)) {
+        Write-Warning "No se encontrÃ³ el golden set de revisiÃ³n: $resolvedGoldenSet"
+        return
+    }
+
+    $innerCommand = "pip install -q -r requirements.txt && python scripts/check_review_golden_set.py $MatrixPath --golden-set $GoldenSetPath"
+    Invoke-Docker -Arguments @(
+        'run', '--rm',
+        '-v', "${workspace}:/workspace",
+        '-w', '/workspace',
+        $scannerImage,
+        'sh', '-lc', $innerCommand
+    )
+    Write-Host "Golden set de revisiÃ³n OK: $resolvedGoldenSet" -ForegroundColor Green
+}
+
 function Assert-RequiredJsonProperty {
     param(
         $Object,
@@ -254,6 +278,7 @@ try {
 }
 
 Export-ReviewMatrix -Runs $executedRuns -OutputPath $ReviewMatrixOutput
+Assert-ReviewGoldenSet -MatrixPath $ReviewMatrixOutput -GoldenSetPath $ReviewGoldenSet
 
 Write-Host ''
 Write-Host 'Validacion completada. Runs generados:' -ForegroundColor Green

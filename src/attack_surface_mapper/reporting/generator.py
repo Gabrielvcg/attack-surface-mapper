@@ -9,7 +9,7 @@ from pathlib import Path
 from statistics import mean
 from typing import Iterable
 
-from attack_surface_mapper.models.vulnerability import Vulnerability
+from attack_surface_mapper.models.vulnerability import FINDING_SCHEMA_VERSION, Vulnerability
 from attack_surface_mapper.reporting.review_matrix import review_bucket_for_finding
 
 SEVERITY_LABELS = ['critical', 'high', 'medium', 'low', 'info', 'unknown']
@@ -111,13 +111,26 @@ def _is_application_finding(vulnerability: Vulnerability) -> bool:
     return category not in NETWORK_DISCOVERY_CATEGORIES | {'discovery'} and not _is_hygiene_finding(vulnerability)
 
 
-def _split_report_groups(vulnerabilities: Iterable[Vulnerability]) -> tuple[list[Vulnerability], list[Vulnerability], list[Vulnerability], list[Vulnerability]]:
+def _is_review_surface(vulnerability: Vulnerability) -> bool:
+    if not _is_application_finding(vulnerability):
+        return False
+    return review_bucket_for_finding(vulnerability.to_summary_record()) == 'revisar'
+
+
+def _is_discovery_like_surface(vulnerability: Vulnerability) -> bool:
+    if not _is_application_finding(vulnerability):
+        return False
+    return review_bucket_for_finding(vulnerability.to_summary_record()) == 'descubrimiento'
+
+
+def _split_report_groups(vulnerabilities: Iterable[Vulnerability]) -> tuple[list[Vulnerability], list[Vulnerability], list[Vulnerability], list[Vulnerability], list[Vulnerability]]:
     sorted_vulns = list(vulnerabilities)
-    application = [v for v in sorted_vulns if _is_application_finding(v)]
+    application = [v for v in sorted_vulns if _is_application_finding(v) and not _is_review_surface(v) and not _is_discovery_like_surface(v)]
+    review_surface = [v for v in sorted_vulns if _is_review_surface(v)]
     hygiene = [v for v in sorted_vulns if _is_hygiene_finding(v)]
     network = [v for v in sorted_vulns if (v.category or '').lower() in NETWORK_DISCOVERY_CATEGORIES]
-    discovery = [v for v in sorted_vulns if (v.category or '').lower() == 'discovery']
-    return application, hygiene, network, discovery
+    discovery = [v for v in sorted_vulns if (v.category or '').lower() == 'discovery' or _is_discovery_like_surface(v)]
+    return application, review_surface, hygiene, network, discovery
 
 
 def _headline_risk_findings(vulnerabilities: Iterable[Vulnerability]) -> list[Vulnerability]:
@@ -166,6 +179,7 @@ class ReportStats:
     needs_manual_validation: int
     confirmed_high_or_critical: int
     application_findings: int
+    review_surface_findings: int
     hygiene_findings: int
     discovery_findings: int
 
@@ -181,7 +195,7 @@ class ReportGenerator:
     @staticmethod
     def compute_stats(vulnerabilities: Iterable[Vulnerability]) -> ReportStats:
         vulns = list(vulnerabilities)
-        application_findings, hygiene_findings, _, discovery_findings = _split_report_groups(vulns)
+        application_findings, review_surface_findings, hygiene_findings, _, discovery_findings = _split_report_groups(vulns)
         severity_counter = Counter((v.severity or 'unknown').lower() for v in vulns)
         priority_counter = Counter((v.priority or 'low').lower() for v in vulns)
         category_counter = Counter(v.category or 'uncategorised' for v in vulns)
@@ -210,6 +224,7 @@ class ReportGenerator:
                 and (v.priority or v.severity or '').lower() in {'critical', 'high'}
             ),
             application_findings=len(application_findings),
+            review_surface_findings=len(review_surface_findings),
             hygiene_findings=len(hygiene_findings),
             discovery_findings=len(discovery_findings),
         )
@@ -229,7 +244,7 @@ class ReportGenerator:
             impact_note = 'No se observaron hallazgos de prioridad alta o crítica en esta ejecución.'
         return (
             f'Se identificaron {stats.total_findings} hallazgos correlacionados. '
-            f'Aplicación: {stats.application_findings}; higiene/endurecimiento: {stats.hygiene_findings}; descubrimiento: {stats.discovery_findings}. '
+            f'Riesgo accionable: {stats.application_findings}; superficie a revisar: {stats.review_surface_findings}; higiene/endurecimiento: {stats.hygiene_findings}; descubrimiento: {stats.discovery_findings}. '
             f'Prioridades: {priorities}. Severidades: {severities}. '
             f'Hallazgos que requieren validación manual: {stats.needs_manual_validation}. '
             f'{impact_note}'
@@ -244,34 +259,19 @@ class ReportGenerator:
 
     @staticmethod
     def _serialize_top_finding(vulnerability: Vulnerability) -> dict:
-        return {
-            'title': vulnerability.title,
-            'target': vulnerability.target,
-            'priority': vulnerability.priority,
-            'severity': vulnerability.severity,
-            'category': vulnerability.category,
-            'finding_id': vulnerability.finding_id,
-            'correlation_id': vulnerability.correlation_id,
-            'kind': vulnerability.kind,
-            'confidence': vulnerability.confidence,
-            'verification_status': vulnerability.verification_status,
-            'source_count': vulnerability.source_count,
-            'target_host_original': vulnerability.target_host_original,
-            'asset_host': vulnerability.asset_host,
-            'asset_host_resolved': vulnerability.asset_host_resolved,
-            'asset_port': vulnerability.asset_port,
-            'evidence_summary': vulnerability.evidence_summary,
-            'recommendation': vulnerability.recommendation,
-        }
+        return vulnerability.to_summary_record()
 
     def build_summary_payload(self, vulnerabilities: Iterable[Vulnerability], target: str, comparison: dict | None = None) -> dict:
         sorted_vulns = self.sort_vulnerabilities(vulnerabilities)
         stats = self.compute_stats(sorted_vulns)
-        application_findings, hygiene_findings, _, discovery_findings = _split_report_groups(sorted_vulns)
+        application_findings, review_surface_findings, hygiene_findings, _, discovery_findings = _split_report_groups(sorted_vulns)
         headline_risk_findings = _headline_risk_findings(application_findings)
+        if not headline_risk_findings:
+            headline_risk_findings = _headline_risk_findings(review_surface_findings)
         comparison_payload = _normalise_comparison(comparison)
         return {
-            'schema_version': '1.0',
+            'schema_version': FINDING_SCHEMA_VERSION,
+            'finding_contract': Vulnerability.contract_metadata(),
             'title': self.title,
             'target': target,
             'executive_summary': self.executive_summary(stats),
@@ -282,6 +282,8 @@ class ReportGenerator:
             'top_findings': [self._serialize_top_finding(v) for v in sorted_vulns[:10]],
             'top_risk_finding_count': min(len(headline_risk_findings), 5),
             'top_risk_findings': [self._serialize_top_finding(v) for v in headline_risk_findings[:5]],
+            'top_review_finding_count': min(len(review_surface_findings), 5),
+            'top_review_findings': [self._serialize_top_finding(v) for v in review_surface_findings[:5]],
             'top_hygiene_finding_count': min(len(hygiene_findings), 5),
             'top_hygiene_findings': [self._serialize_top_finding(v) for v in hygiene_findings[:5]],
             'top_discovery_finding_count': min(len(discovery_findings), 5),
@@ -345,9 +347,11 @@ class ReportGenerator:
         sorted_vulns = self.sort_vulnerabilities(vulnerabilities)
         stats = self.compute_stats(sorted_vulns)
         comparison_payload = _normalise_comparison(comparison) if comparison else {}
-        application_findings, hygiene_findings, network_services, discovery_like = _split_report_groups(sorted_vulns)
+        application_findings, review_surface_findings, hygiene_findings, network_services, discovery_like = _split_report_groups(sorted_vulns)
         confirmed = [v for v in application_findings if (v.verification_status or '').lower() == 'confirmed']
         plausible = [v for v in application_findings if (v.verification_status or '').lower() != 'confirmed']
+        review_confirmed = [v for v in review_surface_findings if (v.verification_status or '').lower() == 'confirmed']
+        review_plausible = [v for v in review_surface_findings if (v.verification_status or '').lower() != 'confirmed']
         hygiene_confirmed = [v for v in hygiene_findings if (v.verification_status or '').lower() == 'confirmed']
         hygiene_plausible = [v for v in hygiene_findings if (v.verification_status or '').lower() != 'confirmed']
 
@@ -389,6 +393,14 @@ class ReportGenerator:
             lines.append('No se detectaron hallazgos plausibles adicionales de aplicación.')
         for idx, vuln in enumerate(plausible, 1):
             self._append_markdown_finding(lines, vuln, f'P{idx}')
+
+        lines += ['', '## Superficie pública a revisar', '']
+        if not review_surface_findings:
+            lines.append('No se detectó superficie pública relevante pendiente de revisión manual.')
+        for idx, vuln in enumerate(review_confirmed, 1):
+            self._append_markdown_finding(lines, vuln, f'R{idx}')
+        for idx, vuln in enumerate(review_plausible, 1):
+            self._append_markdown_finding(lines, vuln, f'RP{idx}')
 
         lines += ['', '## Hallazgos de higiene y endurecimiento', '']
         if not hygiene_findings:

@@ -51,6 +51,54 @@ def _load_json(path: Path) -> object:
     return json.loads(path.read_text(encoding='utf-8'))
 
 
+def load_review_matrix(path: str | Path) -> list[dict[str, str]]:
+    with Path(path).open(encoding='utf-8', newline='') as handle:
+        return list(csv.DictReader(handle))
+
+
+def load_review_golden_set(path: str | Path) -> list[dict[str, str]]:
+    payload = _load_json(Path(path))
+    return [dict(item) for item in payload or []]
+
+
+def evaluate_review_rows_against_golden_set(rows: Iterable[dict[str, str]], golden_set: Iterable[dict[str, str]]) -> dict[str, object]:
+    indexed = {
+        (
+            str(row.get('run_name') or ''),
+            str(row.get('title') or ''),
+        ): row
+        for row in rows
+    }
+    checked = 0
+    mismatches: list[dict[str, str]] = []
+    missing: list[dict[str, str]] = []
+    for expected in golden_set:
+        checked += 1
+        key = (str(expected.get('run_name') or ''), str(expected.get('title') or ''))
+        row = indexed.get(key)
+        if row is None:
+            missing.append({'run_name': key[0], 'title': key[1]})
+            continue
+        for field_name, expected_value in expected.items():
+            if field_name in {'run_name', 'title'}:
+                continue
+            actual_value = str(row.get(field_name) or '')
+            if actual_value != str(expected_value):
+                mismatches.append({
+                    'run_name': key[0],
+                    'title': key[1],
+                    'field': field_name,
+                    'expected': str(expected_value),
+                    'actual': actual_value,
+                })
+    return {
+        'checked': checked,
+        'missing': missing,
+        'mismatches': mismatches,
+        'ok': not missing and not mismatches,
+    }
+
+
 def _iter_vulnerability_files(run_dir: Path) -> Iterable[tuple[str, str, Path]]:
     manifest_path = run_dir / 'run_manifest.json'
     if not manifest_path.exists():
