@@ -106,6 +106,7 @@ Finally, the tool generates:
 - aggregate run reports
 - JSON summaries
 - Markdown / CSV / HTML outputs
+- optional Elasticsearch export bundles from an existing run
 
 ---
 
@@ -505,6 +506,7 @@ Available at the root of each run:
 - `reports/aggregate_summary.json`
 - `reports/aggregate_report.md`
 - `reports/aggregate_findings.csv`
+- `elasticsearch/` after running the export helper
 
 ### Target-level outputs
 Available per target:
@@ -543,6 +545,46 @@ Useful to understand:
 
 ### 5. console logs
 Very useful to compare how noisy each profile is.
+
+### 6. `elasticsearch/`
+Optional post-scan bundle for Elasticsearch ingestion.
+It is generated from an existing run and includes:
+- index mappings
+- `_bulk` NDJSON exports
+- helper flows for manual/Kibana Dev Tools, `curl` and Python
+
+Example:
+
+```bash
+python scripts/export_elasticsearch_bundle.py --run-dir scans/lab_juice_shop_passive_recon_enum
+```
+
+This creates:
+
+```text
+scans/<run>/elasticsearch/
+  findings_mapping.json
+  summaries_mapping.json
+  runs_mapping.json
+  findings_bulk.ndjson
+  summaries_bulk.ndjson
+  runs_bulk.ndjson
+  manual_kibana_devtools.md
+  ingest_with_curl.sh
+  ingest_with_python.py
+  export_manifest.json
+```
+
+Default indices:
+- `attack-surface-mapper-findings`
+- `attack-surface-mapper-summaries`
+- `attack-surface-mapper-runs`
+
+You can change the prefix with:
+
+```bash
+python scripts/export_elasticsearch_bundle.py --run-dir scans/<run> --index-prefix asm-demo
+```
 
 ---
 
