@@ -2,6 +2,10 @@
 
 ## v10.22.8 polish
 
+- Añade un exportador independiente de Elasticsearch (`scripts/export_elasticsearch_bundle.py`) que empaqueta findings, summaries y run manifest desde un run ya generado sin tocar el pipeline principal.
+- Genera mappings estables, NDJSON `_bulk` y helpers de ingesta para las tres vías pedidas por el tutor: manual/Kibana Dev Tools, `curl` y Python.
+- Reutiliza el contrato actual del hallazgo (`finding_id`, `correlation_id`, `priority_score`, `finding_role`, `validated`, `validation_basis`, etc.) y evita exportar `raw` completo para mantener los índices más estables.
+
 - Introduce un scoring estructurado (`scoring_version`, `priority_score`) basado en severidad, confianza, rol del hallazgo y base de validaciÃ³n, manteniendo la salida `low/medium/high/critical` pero haciÃ©ndola mÃ¡s estable y auditable.
 - Expone el score numÃ©rico y su razÃ³n en reportes, CSV, agregados y matriz de revisiÃ³n para facilitar comparativas futuras e ingest estructurado.
 - Ajusta `comparison.json` para detectar cambios en `priority_score` aunque la etiqueta de prioridad no cambie, mejorando el seguimiento fino entre runs.
