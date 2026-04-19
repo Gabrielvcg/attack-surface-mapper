@@ -468,6 +468,31 @@ When `-IncludeEnum` is enabled, the script uses
 `config/examples/lab-passive-recon-enum.yml` so the enum profile stays reproducible
 in Docker without depending on a host-side Nuclei install.
 
+### Repeatable local Elasticsearch validation
+
+To validate the current Elasticsearch integration end-to-end in a repeatable way:
+
+```powershell
+.\scripts\validate_elasticsearch_local.ps1
+```
+
+The helper:
+- starts a local single-node Elasticsearch container
+- starts Juice Shop locally
+- runs a passive scan against Juice Shop
+- exports the resulting run with `scripts/export_elasticsearch_bundle.py`
+- creates the three indices and ingests the generated NDJSON
+- verifies counts and the expected finding contract fields
+- reingests the same bundle to confirm stable `_id` behaviour
+- deletes and recreates the indices to confirm the exported mappings are sufficient
+
+Useful options:
+
+```powershell
+.\scripts\validate_elasticsearch_local.ps1 -RunName es_demo_1 -IndexPrefix asm-demo
+.\scripts\validate_elasticsearch_local.ps1 -KeepElasticsearchRunning -KeepLabRunning
+```
+
 ---
 
 ## Output Structure

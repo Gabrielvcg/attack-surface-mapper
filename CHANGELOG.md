@@ -2,6 +2,7 @@
 
 ## v10.22.8 polish
 
+- Añade `scripts/validate_elasticsearch_local.ps1` para validar de extremo a extremo la integración local con Elasticsearch: scan controlado, export bundle, creación de índices, ingestión `_bulk`, verificación de contrato, reingesta e índices recreados.
 - Añade un exportador independiente de Elasticsearch (`scripts/export_elasticsearch_bundle.py`) que empaqueta findings, summaries y run manifest desde un run ya generado sin tocar el pipeline principal.
 - Genera mappings estables, NDJSON `_bulk` y helpers de ingesta para las tres vías pedidas por el tutor: manual/Kibana Dev Tools, `curl` y Python.
 - Reutiliza el contrato actual del hallazgo (`finding_id`, `correlation_id`, `priority_score`, `finding_role`, `validated`, `validation_basis`, etc.) y evita exportar `raw` completo para mantener los índices más estables.

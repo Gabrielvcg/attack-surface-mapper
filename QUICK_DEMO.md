@@ -227,6 +227,17 @@ The generated bundle includes the three ingestion paths requested by the tutor:
 - `curl`
 - Python
 
+If you want to validate the whole local flow, including a temporary Elasticsearch instance:
+
+```powershell
+.\scripts\validate_elasticsearch_local.ps1
+```
+
+That helper starts Elasticsearch, runs a passive Juice Shop scan, exports the
+bundle, ingests the three NDJSON files, verifies counts and contract fields,
+checks reingestion idempotency, and recreates the indices once to confirm the
+exported mappings are sufficient.
+
 ---
 
 ## Passive vs Active usage (important)
