@@ -7,11 +7,22 @@ param(
     [string]$ElasticsearchImage = 'docker.elastic.co/elasticsearch/elasticsearch:8.13.4',
     [string]$ElasticsearchContainer = 'asm-es',
     [string]$ElasticsearchUrl = 'http://localhost:9200',
+    [int]$ElasticsearchHostPort = 9200,
+    [int]$ElasticsearchContainerPort = 9200,
+    [string]$ElasticsearchUsername = '',
+    [string]$ElasticsearchPassword = '',
+    [string]$ElasticsearchApiKey = '',
+    [switch]$SkipCertificateCheck,
     [string]$LabContainer = 'asm-juice',
     [string]$LabImage = 'bkimminich/juice-shop',
-    [string]$Target = 'http://host.docker.internal:3000',
-    [string]$HealthUrl = 'http://localhost:3000',
+    [int]$LabHostPort = 3000,
+    [int]$LabContainerPort = 3000,
+    [string]$ScannerTargetHost = 'host.docker.internal',
+    [string]$Target = '',
+    [string]$HealthUrl = '',
     [int]$MinimumFindings = 1,
+    [string]$DockerCli = '',
+    [switch]$AddHostGateway,
     [switch]$KeepElasticsearchRunning,
     [switch]$KeepLabRunning
 )
@@ -21,14 +32,25 @@ $ErrorActionPreference = 'Stop'
 $workspace = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $runDir = Join-Path $workspace "scans\$RunName"
 $bundleDir = Join-Path $runDir 'elasticsearch'
+$isWindows = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
+    [System.Runtime.InteropServices.OSPlatform]::Windows
+)
 
 function Resolve-DockerCli {
-    $candidates = @()
+    if ($DockerCli) {
+        if (($DockerCli -match '[\\/]') -and -not (Test-Path $DockerCli)) {
+            throw "The path passed with -DockerCli does not exist: $DockerCli"
+        }
+        return $DockerCli
+    }
 
-    $candidates += 'C:\Program Files\Docker\Docker\resources\bin\docker.exe'
+    $candidates = @()
+    if ($isWindows) {
+        $candidates += 'C:\Program Files\Docker\Docker\resources\bin\docker.exe'
+    }
     $candidates += 'docker.exe'
     $candidates += 'docker'
-    
+
     try {
         $command = Get-Command docker -ErrorAction Stop
         if ($command -and $command.Source) {
@@ -48,7 +70,6 @@ function Resolve-DockerCli {
                 }
                 continue
             }
-
             $resolved = Get-Command $candidate -ErrorAction Stop
             if ($resolved -and $resolved.Source) {
                 return $resolved.Source
@@ -58,28 +79,85 @@ function Resolve-DockerCli {
         }
     }
 
-    throw 'No se encontró docker CLI. Abre Docker Desktop y verifica que docker.exe esté disponible en PATH.'
+    throw 'Docker CLI was not found. Start Docker and verify docker is available in PATH.'
 }
 
 $dockerCli = Resolve-DockerCli
 
 function Invoke-Docker {
     param([string[]]$Arguments)
+
     Write-Host "$dockerCli $($Arguments -join ' ')" -ForegroundColor DarkGray
     & $dockerCli @Arguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "docker failed with exit code $LASTEXITCODE"
+    }
+}
+
+function Get-ContainerId {
+    param([string]$Name)
+    return (& $dockerCli ps -aq --filter "name=^${Name}$")
+}
+
+function Test-ContainerRunning {
+    param([string]$Name)
+
+    $containerId = Get-ContainerId -Name $Name
+    if (-not $containerId) {
+        return $false
+    }
+    $running = (& $dockerCli inspect -f '{{.State.Running}}' $Name 2>$null)
+    return ($running -eq 'true')
 }
 
 function Stop-ContainerIfExists {
     param([string]$Name)
 
     try {
-        $existing = & docker ps -aq --filter "name=^${Name}$"
+        $existing = Get-ContainerId -Name $Name
         if ($existing) {
-            & docker rm -f $Name | Out-Null
+            & $dockerCli rm -f $Name | Out-Null
         }
     } catch {
-        Write-Warning "No se pudo limpiar el contenedor ${Name}: $($_.Exception.Message)"
+        Write-Warning "Could not remove container ${Name}: $($_.Exception.Message)"
     }
+}
+
+function Ensure-Container {
+    param(
+        [string]$Name,
+        [string[]]$RunArguments
+    )
+
+    if (Test-ContainerRunning -Name $Name) {
+        Write-Host "Reusing running container: $Name" -ForegroundColor Yellow
+        return $false
+    }
+
+    Stop-ContainerIfExists -Name $Name
+    Invoke-Docker -Arguments $RunArguments | Out-Null
+    return $true
+}
+
+function Get-HttpRequestOptions {
+    $params = @{}
+
+    if ($ElasticsearchApiKey) {
+        $params['Headers'] = @{ Authorization = "ApiKey $ElasticsearchApiKey" }
+    } elseif ($ElasticsearchUsername -and $ElasticsearchPassword) {
+        $raw = "${ElasticsearchUsername}:${ElasticsearchPassword}"
+        $encoded = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes($raw))
+        $params['Headers'] = @{ Authorization = "Basic $encoded" }
+    }
+
+    if ($SkipCertificateCheck) {
+        $restParams = (Get-Command Invoke-RestMethod).Parameters
+        if ($restParams.ContainsKey('SkipCertificateCheck')) {
+            $params['SkipCertificateCheck'] = $true
+        }
+    }
+
+    return $params
 }
 
 function Wait-HttpReady {
@@ -92,9 +170,10 @@ function Wait-HttpReady {
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     while ((Get-Date) -lt $deadline) {
         try {
-            $response = Invoke-WebRequest -Uri $Url -TimeoutSec 5 -UseBasicParsing
+            $options = Get-HttpRequestOptions
+            $response = Invoke-WebRequest -Uri $Url -TimeoutSec 5 -UseBasicParsing @options
             if ($response.StatusCode -ge 200 -and $response.StatusCode -lt 500) {
-                Write-Host "$Name listo en $Url (status $($response.StatusCode))" -ForegroundColor Green
+                Write-Host "$Name ready at $Url (status $($response.StatusCode))" -ForegroundColor Green
                 return
             }
         } catch {
@@ -104,26 +183,33 @@ function Wait-HttpReady {
         Start-Sleep -Seconds 2
     }
 
-    throw "Timeout esperando a que $Name estuviera listo en $Url"
+    throw "Timeout waiting for $Name at $Url"
 }
 
 function Invoke-ScannerInContainer {
     param([string]$Command)
 
-    Invoke-Docker -Arguments @(
+    $arguments = @(
         'run', '--rm',
         '-v', "${workspace}:/workspace",
-        '-w', '/workspace',
+        '-w', '/workspace'
+    )
+    if ($AddHostGateway) {
+        $arguments += @('--add-host', "${ScannerTargetHost}:host-gateway")
+    }
+    $arguments += @(
         $ScannerImage,
         'sh', '-lc', "pip install -q -r requirements.txt && $Command"
     )
+
+    Invoke-Docker -Arguments $arguments
 }
 
 function Assert-PathExists {
     param([string]$Path)
 
     if (-not (Test-Path $Path)) {
-        throw "No se encontrÃ³ el artefacto esperado: $Path"
+        throw "Expected artifact was not generated: $Path"
     }
 }
 
@@ -146,6 +232,9 @@ function Invoke-EsRequest {
         TimeoutSec = 60
         UseBasicParsing = $true
     }
+    foreach ($entry in (Get-HttpRequestOptions).GetEnumerator()) {
+        $params[$entry.Key] = $entry.Value
+    }
     if ($ContentType) {
         $params['ContentType'] = $ContentType
     }
@@ -160,8 +249,9 @@ function Remove-EsIndexIfPresent {
     param([string]$IndexName)
 
     try {
-        Invoke-WebRequest -Method Delete -Uri "$ElasticsearchUrl/$IndexName" -TimeoutSec 30 -UseBasicParsing | Out-Null
-        Write-Host "Indice eliminado: $IndexName" -ForegroundColor Yellow
+        $options = Get-HttpRequestOptions
+        Invoke-WebRequest -Method Delete -Uri "$ElasticsearchUrl/$IndexName" -TimeoutSec 30 -UseBasicParsing @options | Out-Null
+        Write-Host "Index removed: $IndexName" -ForegroundColor Yellow
     } catch {
         if ($_.Exception.Response -and ($_.Exception.Response.StatusCode.value__ -eq 404)) {
             return
@@ -170,7 +260,7 @@ function Remove-EsIndexIfPresent {
         if (-not $message) {
             $message = $_.Exception.Message
         }
-        throw "No se pudo eliminar el indice ${IndexName}: $message"
+        throw "Could not remove index ${IndexName}: $message"
     }
 }
 
@@ -182,7 +272,7 @@ function New-EsIndexFromFile {
 
     $body = [System.IO.File]::ReadAllBytes($MappingPath)
     Invoke-EsRequest -Method 'Put' -Url "$ElasticsearchUrl/$IndexName" -ContentType 'application/json' -Body $body | Out-Null
-    Write-Host "Indice creado: $IndexName" -ForegroundColor Green
+    Write-Host "Index created: $IndexName" -ForegroundColor Green
 }
 
 function Invoke-EsBulkFromFile {
@@ -202,9 +292,9 @@ function Invoke-EsBulkFromFile {
                 $failed += "$($item.$op._id): $($item.$op.error.reason)"
             }
         }
-        throw "Bulk con errores en ${IndexName}: $($failed -join '; ')"
+        throw "Bulk errors in ${IndexName}: $($failed -join '; ')"
     }
-    Write-Host "Bulk OK en ${IndexName}: $(@($response.items).Count) documentos procesados" -ForegroundColor Green
+    Write-Host "Bulk OK in ${IndexName}: $(@($response.items).Count) documents processed" -ForegroundColor Green
 }
 
 function Get-EsCount {
@@ -216,7 +306,7 @@ function Invoke-EsRefresh {
     param([string]$IndexName)
 
     Invoke-EsRequest -Method 'Post' -Url "$ElasticsearchUrl/$IndexName/_refresh" -ContentType '' -Body $null | Out-Null
-    Write-Host "Refresh OK en ${IndexName}" -ForegroundColor Green
+    Write-Host "Refresh OK in ${IndexName}" -ForegroundColor Green
 }
 
 function Assert-RequiredProperty {
@@ -227,7 +317,7 @@ function Assert-RequiredProperty {
     )
 
     if (-not ($Object.PSObject.Properties.Name -contains $PropertyName)) {
-        throw "Falta la propiedad '$PropertyName' en $Context"
+        throw "Missing property '$PropertyName' in $Context"
     }
 }
 
@@ -240,12 +330,12 @@ function Assert-RunOutputs {
 
     $summaryPaths = Get-ChildItem -Path (Join-Path $runDir 'targets') -Filter 'report.summary.json' -Recurse -File
     if (-not $summaryPaths) {
-        throw "No se encontrÃ³ ningÃºn report.summary.json dentro de $runDir\targets"
+        throw "No report.summary.json was found under $runDir/targets"
     }
 
     $aggregate = Get-JsonFile -Path $aggregatePath
     if ([int]$aggregate.summary.total_findings -lt $MinimumFindings) {
-        throw "El agregado refleja menos hallazgos de los esperados: $($aggregate.summary.total_findings) < $MinimumFindings"
+        throw "Aggregate findings below expected minimum: $($aggregate.summary.total_findings) < $MinimumFindings"
     }
 }
 
@@ -271,7 +361,7 @@ function Assert-FindingDocumentContract {
 
     $response = Invoke-EsRequest -Method 'Get' -Url "$ElasticsearchUrl/$IndexName/_search?size=1" -ContentType '' -Body $null
     if (-not $response.hits.hits -or @($response.hits.hits).Count -lt 1) {
-        throw "No se recuperÃ³ ningÃºn finding desde $IndexName"
+        throw "No finding document was returned from $IndexName"
     }
 
     $doc = @($response.hits.hits)[0]._source
@@ -280,13 +370,13 @@ function Assert-FindingDocumentContract {
     }
 
     if (-not $doc.finding_id) {
-        throw "finding_id estÃ¡ vacÃ­o en $IndexName"
+        throw "finding_id is empty in $IndexName"
     }
     if (-not $doc.correlation_id) {
-        throw "correlation_id estÃ¡ vacÃ­o en $IndexName"
+        throw "correlation_id is empty in $IndexName"
     }
 
-    Write-Host "Contrato de findings verificado en $IndexName" -ForegroundColor Green
+    Write-Host "Finding contract verified in $IndexName" -ForegroundColor Green
 }
 
 function Assert-RunManifestDocument {
@@ -294,54 +384,57 @@ function Assert-RunManifestDocument {
 
     $response = Invoke-EsRequest -Method 'Get' -Url "$ElasticsearchUrl/$IndexName/_search?size=1" -ContentType '' -Body $null
     if (-not $response.hits.hits -or @($response.hits.hits).Count -lt 1) {
-        throw "No se recuperÃ³ ningÃºn documento de run desde $IndexName"
+        throw "No run document was returned from $IndexName"
     }
 
     $doc = @($response.hits.hits)[0]._source
     if ($doc.document_type -ne 'run_manifest') {
-        throw "Se esperaba document_type=run_manifest en $IndexName y se obtuvo '$($doc.document_type)'"
+        throw "Expected document_type=run_manifest in $IndexName and got '$($doc.document_type)'"
     }
 
-    Write-Host "Documento run_manifest verificado en $IndexName" -ForegroundColor Green
+    Write-Host "run_manifest document verified in $IndexName" -ForegroundColor Green
 }
 
 $startedEs = $false
 $startedLab = $false
 
 try {
-    Stop-ContainerIfExists -Name $ElasticsearchContainer
-    Invoke-Docker -Arguments @(
+    if (-not $Target) {
+        $Target = "http://${ScannerTargetHost}:$LabHostPort"
+    }
+    if (-not $HealthUrl) {
+        $HealthUrl = "http://localhost:$LabHostPort"
+    }
+
+    $startedEs = Ensure-Container -Name $ElasticsearchContainer -RunArguments @(
         'run', '-d', '--name', $ElasticsearchContainer,
-        '-p', '9200:9200',
+        '-p', "${ElasticsearchHostPort}:${ElasticsearchContainerPort}",
         '-e', 'discovery.type=single-node',
         '-e', 'xpack.security.enabled=false',
         '-e', 'ES_JAVA_OPTS=-Xms1g -Xmx1g',
         $ElasticsearchImage
-    ) | Out-Null
-    $startedEs = $true
+    )
     Wait-HttpReady -Url $ElasticsearchUrl -Name 'Elasticsearch' -TimeoutSeconds 240
     Wait-HttpReady -Url "$ElasticsearchUrl/_cluster/health" -Name 'Elasticsearch cluster health' -TimeoutSeconds 240
 
-    Stop-ContainerIfExists -Name $LabContainer
-    Invoke-Docker -Arguments @(
+    $startedLab = Ensure-Container -Name $LabContainer -RunArguments @(
         'run', '-d', '--rm',
         '--name', $LabContainer,
-        '-p', '3000:3000',
+        '-p', "${LabHostPort}:${LabContainerPort}",
         $LabImage
-    ) | Out-Null
-    $startedLab = $true
+    )
     Wait-HttpReady -Url $HealthUrl -Name 'Juice Shop' -TimeoutSeconds 240
 
     if (Test-Path $runDir) {
-        Write-Host "Limpiando run previo: $runDir" -ForegroundColor Yellow
+        Write-Host "Removing previous run: $runDir" -ForegroundColor Yellow
         Remove-Item -Recurse -Force -LiteralPath $runDir
     }
 
-    Write-Host "Ejecutando escaneo $Profile contra $Target -> $RunName" -ForegroundColor Cyan
+    Write-Host "Running scan $Profile against $Target -> $RunName" -ForegroundColor Cyan
     Invoke-ScannerInContainer -Command "python main.py --profile $Profile --run-name $RunName $Target"
     Assert-RunOutputs
 
-    Write-Host "Exportando bundle Elasticsearch para $RunName" -ForegroundColor Cyan
+    Write-Host "Exporting Elasticsearch bundle for $RunName" -ForegroundColor Cyan
     Invoke-ScannerInContainer -Command "python scripts/export_elasticsearch_bundle.py --run-dir scans/$RunName --index-prefix $IndexPrefix"
     Assert-BundleOutputs
 
@@ -370,19 +463,19 @@ try {
     $initialRunsCount = Get-EsCount -IndexName $runsIndex
 
     if ($initialFindingsCount -lt 1) {
-        throw "El indice $findingsIndex no contiene findings"
+        throw "Index $findingsIndex does not contain findings"
     }
     if ($initialSummariesCount -lt 1) {
-        throw "El indice $summariesIndex no contiene summaries"
+        throw "Index $summariesIndex does not contain summaries"
     }
     if ($initialRunsCount -lt 1) {
-        throw "El indice $runsIndex no contiene run docs"
+        throw "Index $runsIndex does not contain run documents"
     }
 
     Assert-FindingDocumentContract -IndexName $findingsIndex
     Assert-RunManifestDocument -IndexName $runsIndex
 
-    Write-Host "Probando reingesta idempotente" -ForegroundColor Cyan
+    Write-Host "Testing idempotent reingestion" -ForegroundColor Cyan
     Invoke-EsBulkFromFile -IndexName $findingsIndex -BulkPath (Join-Path $bundleDir 'findings_bulk.ndjson')
     Invoke-EsBulkFromFile -IndexName $summariesIndex -BulkPath (Join-Path $bundleDir 'summaries_bulk.ndjson')
     Invoke-EsBulkFromFile -IndexName $runsIndex -BulkPath (Join-Path $bundleDir 'runs_bulk.ndjson')
@@ -395,16 +488,16 @@ try {
     $reingestedRunsCount = Get-EsCount -IndexName $runsIndex
 
     if ($reingestedFindingsCount -ne $initialFindingsCount) {
-        throw "La reingesta cambiÃ³ el conteo de findings: $initialFindingsCount -> $reingestedFindingsCount"
+        throw "Reingestion changed findings count: $initialFindingsCount -> $reingestedFindingsCount"
     }
     if ($reingestedSummariesCount -ne $initialSummariesCount) {
-        throw "La reingesta cambiÃ³ el conteo de summaries: $initialSummariesCount -> $reingestedSummariesCount"
+        throw "Reingestion changed summaries count: $initialSummariesCount -> $reingestedSummariesCount"
     }
     if ($reingestedRunsCount -ne $initialRunsCount) {
-        throw "La reingesta cambiÃ³ el conteo de runs: $initialRunsCount -> $reingestedRunsCount"
+        throw "Reingestion changed runs count: $initialRunsCount -> $reingestedRunsCount"
     }
 
-    Write-Host "Probando borrado y recreaciÃ³n de Ã­ndices" -ForegroundColor Cyan
+    Write-Host "Testing index deletion and recreation" -ForegroundColor Cyan
     foreach ($indexName in @($findingsIndex, $summariesIndex, $runsIndex)) {
         Remove-EsIndexIfPresent -IndexName $indexName
     }
@@ -421,21 +514,21 @@ try {
     Invoke-EsRefresh -IndexName $runsIndex
 
     if ((Get-EsCount -IndexName $findingsIndex) -ne $initialFindingsCount) {
-        throw "El recreate no restaurÃ³ el conteo esperado en $findingsIndex"
+        throw "Recreate did not restore expected count in $findingsIndex"
     }
     if ((Get-EsCount -IndexName $summariesIndex) -ne $initialSummariesCount) {
-        throw "El recreate no restaurÃ³ el conteo esperado en $summariesIndex"
+        throw "Recreate did not restore expected count in $summariesIndex"
     }
     if ((Get-EsCount -IndexName $runsIndex) -ne $initialRunsCount) {
-        throw "El recreate no restaurÃ³ el conteo esperado en $runsIndex"
+        throw "Recreate did not restore expected count in $runsIndex"
     }
 
     Write-Host ''
-    Write-Host 'Validacion local de Elasticsearch completada.' -ForegroundColor Green
+    Write-Host 'Local Elasticsearch validation completed.' -ForegroundColor Green
     Write-Host "Run: $runDir"
     Write-Host "Bundle: $bundleDir"
     Write-Host "Indices: $findingsIndex, $summariesIndex, $runsIndex"
-    Write-Host "Conteos: findings=$initialFindingsCount summaries=$initialSummariesCount runs=$initialRunsCount"
+    Write-Host "Counts: findings=$initialFindingsCount summaries=$initialSummariesCount runs=$initialRunsCount"
 } finally {
     if (-not $KeepLabRunning -and $startedLab) {
         Stop-ContainerIfExists -Name $LabContainer

@@ -7,6 +7,24 @@ from urllib.parse import urljoin
 from attack_surface_mapper.http_client import RequestError
 
 
+STATIC_PATH_SUFFIXES = (
+    '.css',
+    '.js',
+    '.mjs',
+    '.map',
+    '.png',
+    '.jpg',
+    '.jpeg',
+    '.gif',
+    '.svg',
+    '.ico',
+    '.woff',
+    '.woff2',
+    '.ttf',
+    '.eot',
+)
+
+
 @dataclass(slots=True)
 class ResponseFingerprint:
     status_code: int
@@ -19,6 +37,11 @@ class ResponseFingerprint:
 
 def normalise_text(text: str, max_len: int = 2000) -> str:
     return ' '.join((text or '')[:max_len].split()).strip().lower()
+
+
+def is_static_asset_path(path: str) -> bool:
+    clean_path = (path or '').split('?', 1)[0].lower()
+    return clean_path.endswith(STATIC_PATH_SUFFIXES)
 
 
 def extract_title(text: str) -> str:
@@ -103,3 +126,30 @@ def looks_like_login_surface(response, body_preview: str) -> bool:
     url_signal = any(token in final_url for token in login_url_tokens)
     body_signal = sum(1 for token in login_body_tokens if token in body_preview)
     return url_signal and body_signal >= 2
+
+
+def looks_like_setup_surface(response, body_preview: str) -> bool:
+    final_url = (getattr(response, 'url', '') or '').lower()
+    content_type = (response.headers.get('Content-Type') or '').lower()
+    if 'html' not in content_type:
+        return False
+
+    setup_url_tokens = (
+        '/wp-admin/install.php',
+        '/install.php',
+        '/setup',
+        '/installer',
+    )
+    setup_body_token_groups = (
+        ('wordpress', 'installation'),
+        ('wordpress', 'install.php'),
+        ('famous five-minute', 'installation'),
+        ('proceso de instalación', 'wordpress'),
+        ('información necesaria', 'wordpress'),
+        ('site title', 'username', 'password'),
+        ('título del sitio', 'nombre de usuario', 'contraseña'),
+    )
+
+    url_signal = any(token in final_url for token in setup_url_tokens)
+    body_signal = any(all(token in body_preview for token in group) for group in setup_body_token_groups)
+    return url_signal and body_signal

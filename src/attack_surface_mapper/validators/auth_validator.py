@@ -5,7 +5,7 @@ from urllib.parse import urljoin, urlparse
 from attack_surface_mapper.http_client import RequestError, build_http_session
 from attack_surface_mapper.models.vulnerability import Vulnerability
 from attack_surface_mapper.validators.base import BaseValidator
-from attack_surface_mapper.validators.http_fingerprint import baseline_fingerprint, looks_like_baseline, looks_like_login_surface, normalise_text
+from attack_surface_mapper.validators.http_fingerprint import baseline_fingerprint, is_static_asset_path, looks_like_baseline, looks_like_login_surface, looks_like_setup_surface, normalise_text
 
 
 class AuthValidator(BaseValidator):
@@ -88,6 +88,8 @@ class AuthValidator(BaseValidator):
     def _check_protected_paths(self, session, target: str, host: str | None, port: str | None, scheme: str | None, baseline) -> list[Vulnerability]:
         findings: list[Vulnerability] = []
         for path in self.paths:
+            if is_static_asset_path(path):
+                continue
             url = urljoin(target.rstrip('/') + '/', path.lstrip('/'))
             try:
                 response = session.get(url, timeout=self.timeout, allow_redirects=True)
@@ -123,6 +125,9 @@ class AuthValidator(BaseValidator):
             body_preview = normalise_text(response.text, 1500)
             normalised_path = self._normalise_candidate_path(path)
             normalised_response_path = self._normalise_candidate_path(urlparse(response.url).path)
+
+            if looks_like_setup_surface(response, body_preview):
+                continue
 
             # Public auth entry points such as login/register pages are expected to be
             # reachable without prior authentication. They should be handled as discovery

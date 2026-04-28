@@ -5,7 +5,7 @@ from urllib.parse import urljoin, urlparse
 from attack_surface_mapper.http_client import RequestError, build_http_session
 from attack_surface_mapper.models.vulnerability import Vulnerability
 from attack_surface_mapper.validators.base import BaseValidator
-from attack_surface_mapper.validators.http_fingerprint import baseline_fingerprint, looks_like_baseline, looks_like_login_surface, normalise_text
+from attack_surface_mapper.validators.http_fingerprint import baseline_fingerprint, looks_like_baseline, looks_like_login_surface, looks_like_setup_surface, normalise_text
 
 
 def _header_value(headers: dict[str, str], name: str) -> str:
@@ -167,6 +167,19 @@ class APIValidator(BaseValidator):
     def _classify_path(self, path: str, response, preview: str, content_type: str, baseline):
         baseline_like = looks_like_baseline(response, baseline)
         graphql_signature = ''
+        if looks_like_setup_surface(response, preview):
+            title = 'API Surface Exposed'
+            description = 'Se ha detectado una superficie de API accesible públicamente.'
+            if path in {'/swagger', '/swagger-ui', '/api-docs'}:
+                title = 'Swagger UI Exposed'
+                description = 'Se ha detectado una interfaz de documentación Swagger accesible sin restricciones claras.'
+            elif path == '/openapi.json':
+                title = 'OpenAPI Specification Exposed'
+                description = 'Se ha detectado un documento OpenAPI/Swagger accesible públicamente.'
+            elif path.startswith('/graphql'):
+                title = 'GraphQL Surface Exposed'
+                description = 'Se ha detectado un endpoint o interfaz GraphQL accesible.'
+            return False, 'low', 'respuesta parece una pantalla de instalación/setup, no una superficie API', 'discarded', title, description, 'medium'
         if looks_like_login_surface(response, preview):
             title = 'API Surface Exposed'
             description = 'Se ha detectado una superficie de API accesible pÃºblicamente.'

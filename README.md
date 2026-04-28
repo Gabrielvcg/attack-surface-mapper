@@ -174,8 +174,13 @@ Current stage order:
 2. `NmapStage`
 3. `BrowserDiscoveryStage`
 4. `PassiveValidationStage`
-5. `CorrelationStage`
-6. `ReportingStage`
+5. `CMSRoutingStage`
+6. `CorrelationStage`
+7. `ReportingStage`
+
+`CMSRoutingStage` detects CMS families from already observed content and routes
+to specialized modules only when there is enough evidence. The first supported
+module is WordPress, and the global pipeline stays CMS-agnostic.
 
 #### `src/attack_surface_mapper/collectors/`
 Responsible for gathering information from:
@@ -233,6 +238,37 @@ python -m playwright install
 #### Optional
 - **Nmap** available in `PATH` if you want network reconnaissance
 - **Playwright browsers** for dynamic crawling in the active profile
+
+### Docker scanner runtime
+
+For repeatable local runs, especially active profiles that need external tools,
+build the bundled scanner image instead of installing Nuclei/Nmap on the host:
+
+```powershell
+.\scripts\build_scanner_image.ps1
+```
+
+From Windows CMD, use the `.cmd` wrappers:
+
+```cmd
+scripts\build_scanner_image.cmd
+```
+
+Then run scans through that image:
+
+```powershell
+.\scripts\run_scanner_image.ps1 --profile passive-recon-safe --run-name demo_safe http://host.docker.internal:3000
+.\scripts\run_scanner_image.ps1 --profile active-aggressive --run-name demo_active http://host.docker.internal:8081
+```
+
+```cmd
+scripts\run_scanner_image.cmd --profile passive-recon-safe --run-name demo_safe http://host.docker.internal:3000
+scripts\run_scanner_image.cmd --profile active-aggressive --run-name demo_active http://host.docker.internal:8081
+```
+
+The image includes Python dependencies, Nuclei, Nuclei templates and Nmap.
+Project outputs still land in the host `scans/` directory because the repository
+is mounted into the container at `/workspace`.
 
 ---
 
@@ -476,6 +512,12 @@ To validate the current Elasticsearch integration end-to-end in a repeatable way
 .\scripts\validate_elasticsearch_local.ps1
 ```
 
+On Linux/macOS, use the shell wrapper if PowerShell 7+ (`pwsh`) is available:
+
+```bash
+sh ./scripts/validate_elasticsearch_local.sh
+```
+
 The helper:
 - starts a local single-node Elasticsearch container
 - starts Juice Shop locally
@@ -491,7 +533,22 @@ Useful options:
 ```powershell
 .\scripts\validate_elasticsearch_local.ps1 -RunName es_demo_1 -IndexPrefix asm-demo
 .\scripts\validate_elasticsearch_local.ps1 -KeepElasticsearchRunning -KeepLabRunning
+.\scripts\validate_elasticsearch_local.ps1 -ElasticsearchHostPort 19200 -ElasticsearchUrl http://localhost:19200
+.\scripts\validate_elasticsearch_local.ps1 -LabHostPort 13000 -Target http://host.docker.internal:13000
+.\scripts\validate_elasticsearch_local.ps1 -ElasticsearchUsername elastic -ElasticsearchPassword changeme
+.\scripts\validate_elasticsearch_local.ps1 -ElasticsearchApiKey <api-key>
 ```
+
+For Linux Docker engines where `host.docker.internal` is not provided by default,
+add Docker's host gateway mapping:
+
+```powershell
+.\scripts\validate_elasticsearch_local.ps1 -AddHostGateway
+```
+
+The script keeps all project paths relative to the repository and exposes the
+main environment knobs as parameters: Docker CLI path, images, container names,
+ports, scan target, Elasticsearch URL and optional authentication.
 
 ---
 

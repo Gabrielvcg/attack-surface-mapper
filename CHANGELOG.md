@@ -2,7 +2,9 @@
 
 ## v10.22.8 polish
 
-- Añade `scripts/validate_elasticsearch_local.ps1` para validar de extremo a extremo la integración local con Elasticsearch: scan controlado, export bundle, creación de índices, ingestión `_bulk`, verificación de contrato, reingesta e índices recreados.
+- Añade `Dockerfile.scanner` y scripts PowerShell de build/run para una imagen reutilizable con Python, Nuclei, templates y Nmap, facilitando perfiles activos sin instalar herramientas externas en el host.
+- Añade una capa modular de detección/enrutado CMS (`CMSRoutingStage`) con detector genérico y primer módulo WordPress, evitando acoplar validadores específicos como stages globales.
+- Añade y endurece `scripts/validate_elasticsearch_local.ps1` para validar de extremo a extremo la integración local con Elasticsearch: scan controlado, export bundle, creación de índices, ingestión `_bulk`, verificación de contrato, reingesta e índices recreados. El helper ahora parametriza Docker, puertos, imágenes, target y autenticación básica/API key, reutiliza contenedores vivos y añade wrapper `scripts/validate_elasticsearch_local.sh` para Linux/macOS con PowerShell 7+.
 - Añade un exportador independiente de Elasticsearch (`scripts/export_elasticsearch_bundle.py`) que empaqueta findings, summaries y run manifest desde un run ya generado sin tocar el pipeline principal.
 - Genera mappings estables, NDJSON `_bulk` y helpers de ingesta para las tres vías pedidas por el tutor: manual/Kibana Dev Tools, `curl` y Python.
 - Reutiliza el contrato actual del hallazgo (`finding_id`, `correlation_id`, `priority_score`, `finding_role`, `validated`, `validation_basis`, etc.) y evita exportar `raw` completo para mantener los índices más estables.
