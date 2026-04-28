@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from attack_surface_mapper.core import ScanContext, ScanOutputs, ScanSettings
 from attack_surface_mapper.core import ScanResult
+from attack_surface_mapper.cms import CMSRoutingStage
 from attack_surface_mapper.pipeline.stages import BrowserDiscoveryStage, CorrelationStage, NmapStage, NucleiStage, PassiveValidationStage, ReportingStage
 
 
@@ -14,6 +15,7 @@ class ScanPipeline:
             NmapStage(),
             BrowserDiscoveryStage(),
             PassiveValidationStage(),
+            CMSRoutingStage(),
             CorrelationStage(),
             ReportingStage(),
         ]

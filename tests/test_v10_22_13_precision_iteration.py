@@ -8,6 +8,7 @@ from attack_surface_mapper.models.vulnerability import Vulnerability
 from attack_surface_mapper.orchestrator import ScanResult
 from attack_surface_mapper.reporting import ReportGenerator, ReportPaths
 from attack_surface_mapper.validators.api_validator import APIValidator
+from attack_surface_mapper.validators.auth_validator import AuthValidator
 from attack_surface_mapper.validators.http_fingerprint import fingerprint_response, normalise_text
 from attack_surface_mapper.validators.panels_validator import PanelsValidator
 from attack_surface_mapper.validators.sensitive_files_validator import SensitiveFilesValidator
@@ -45,6 +46,64 @@ def test_api_validator_discards_baseline_like_graphql_without_strong_signature()
     assert verification == 'discarded'
     assert title == 'GraphQL Surface Exposed'
     assert 'sin firma graphql fuerte' in reason
+
+
+def test_api_validator_discards_wordpress_installer_when_checking_graphql() -> None:
+    response = FakeResponse(
+        'https://target.example/wp-admin/install.php',
+        '<html><body><h1>WordPress</h1><p>famous five-minute installation</p><input name="user_name"></body></html>',
+        headers={'Content-Type': 'text/html'},
+    )
+    preview = normalise_text(response.text, 1500)
+
+    include, confidence, reason, verification, title, _, _ = APIValidator()._classify_path(
+        '/graphql',
+        response,
+        preview,
+        'text/html',
+        baseline=None,
+    )
+
+    assert include is False
+    assert confidence == 'low'
+    assert verification == 'discarded'
+    assert title == 'GraphQL Surface Exposed'
+    assert 'instalación/setup' in reason
+
+
+def test_auth_and_panels_skip_wordpress_installer_redirects(monkeypatch) -> None:
+    installer_html = '''
+        <html><body>
+          <h1>WordPress</h1>
+          <p>Este es el famoso proceso de instalación de WordPress en cinco minutos.</p>
+          <label>Nombre de usuario</label><input name="user_name">
+          <label>Contraseña</label><input type="password">
+        </body></html>
+    '''
+
+    def fake_get(self, url, timeout=0, allow_redirects=True, headers=None):
+        if '__attack_surface_mapper_not_found__' in url:
+            return FakeResponse(url, '<html>not found</html>', status_code=404)
+        if url.endswith('/admin') or url.endswith('/dashboard') or url.endswith('/graphql'):
+            return FakeResponse('https://target.example/wp-admin/install.php', installer_html, headers={'Content-Type': 'text/html'})
+        return FakeResponse(url, '<html>home</html>')
+
+    monkeypatch.setattr('requests.sessions.Session.get', fake_get)
+
+    assert AuthValidator(timeout=1, paths=('/admin', '/graphql')).run('https://target.example') == []
+    assert PanelsValidator(timeout=1, paths=('/admin', '/dashboard')).run('https://target.example') == []
+
+
+def test_auth_and_panels_skip_static_assets_under_sensitive_paths(monkeypatch) -> None:
+    def fake_get(self, url, timeout=0, allow_redirects=True, headers=None):
+        if url == 'https://target.example' or '__attack_surface_mapper_not_found__' in url:
+            return FakeResponse(url, '<html>home</html>')
+        raise AssertionError(f'static asset should not be requested: {url}')
+
+    monkeypatch.setattr('requests.sessions.Session.get', fake_get)
+
+    assert AuthValidator(timeout=1, paths=('/wp-admin/js/language-chooser.min.js',)).run('https://target.example') == []
+    assert PanelsValidator(timeout=1, paths=('/wp-admin/css/install.min.css?ver=6.5.5',)).run('https://target.example') == []
 
 
 def test_api_validator_keeps_swagger_as_likely_review_surface_even_with_strong_markers() -> None:

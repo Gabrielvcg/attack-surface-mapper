@@ -54,6 +54,7 @@ class ScanOrchestrator:
         observed_only: bool = False,
         browser_click_budget: int = 12,
         browser_discovery_enabled: bool = True,
+        run_cms_detection: bool = True,
         report_markdown: str | None = None,
         report_html: str | None = None,
         report_csv: str | None = None,
@@ -104,6 +105,7 @@ class ScanOrchestrator:
             observed_only=observed_only,
             browser_click_budget=browser_click_budget,
             browser_discovery_enabled=browser_discovery_enabled,
+            run_cms_detection=run_cms_detection,
             debug=debug,
             report_title=report_title,
         )

@@ -15,6 +15,33 @@ Optional (only for active dynamic profile):
 python -m playwright install
 ```
 
+### Docker scanner image
+
+On Windows/PowerShell, you can build a reusable scanner image with Python,
+Nuclei, Nuclei templates and Nmap:
+
+```powershell
+.\scripts\build_scanner_image.ps1
+```
+
+From Windows CMD:
+
+```cmd
+scripts\build_scanner_image.cmd
+```
+
+Then run the scanner without installing those tools on the host:
+
+```powershell
+.\scripts\run_scanner_image.ps1 --profile passive-recon-safe --run-name demo_safe http://host.docker.internal:3000
+.\scripts\run_scanner_image.ps1 --profile active-aggressive --run-name demo_active http://host.docker.internal:8081
+```
+
+```cmd
+scripts\run_scanner_image.cmd --profile passive-recon-safe --run-name demo_safe http://host.docker.internal:3000
+scripts\run_scanner_image.cmd --profile active-aggressive --run-name demo_active http://host.docker.internal:8081
+```
+
 ## 1.5 Install Nuclei (required)
 
 This tool uses Nuclei (https://github.com/projectdiscovery/nuclei) for fast vulnerability detection.
@@ -233,10 +260,17 @@ If you want to validate the whole local flow, including a temporary Elasticsearc
 .\scripts\validate_elasticsearch_local.ps1
 ```
 
+On Linux/macOS with PowerShell 7+:
+
+```bash
+sh ./scripts/validate_elasticsearch_local.sh
+```
+
 That helper starts Elasticsearch, runs a passive Juice Shop scan, exports the
 bundle, ingests the three NDJSON files, verifies counts and contract fields,
 checks reingestion idempotency, and recreates the indices once to confirm the
-exported mappings are sufficient.
+exported mappings are sufficient. Ports, images, target URL, Docker CLI path and
+Elasticsearch auth can be overridden with parameters.
 
 ---
 

@@ -165,6 +165,7 @@ def get_setting(args: argparse.Namespace, config: dict[str, Any], name: str, def
         'observed_only': validators.get('observed_only') if 'observed_only' in validators else config.get('observed_only'),
         'browser_click_budget': (config.get('browser', {}) or {}).get('click_budget') if isinstance(config.get('browser', {}), dict) else config.get('browser_click_budget'),
         'browser_discovery_enabled': (config.get('browser', {}) or {}).get('enabled') if isinstance(config.get('browser', {}), dict) else config.get('browser_discovery_enabled'),
+        'run_cms_detection': validators.get('cms_detection') if 'cms_detection' in validators else config.get('run_cms_detection'),
         'report_title': reports.get('title') or config.get('report_title'),
         'report_formats': reports.get('formats') or config.get('report_formats'),
         'skip_reports': reports.get('skip_reports') if 'skip_reports' in reports else config.get('skip_reports'),
@@ -239,6 +240,7 @@ def build_effective_config(args: argparse.Namespace, config: dict[str, Any], wor
         'baseline_probe': bool(get_setting(args, config, 'baseline_probe', profile.get('baseline_probe', True))),
         'observed_only': bool(get_setting(args, config, 'observed_only', profile.get('observed_only', False))),
         'browser_discovery_enabled': bool(get_setting(args, config, 'browser_discovery_enabled', profile.get('browser_discovery_enabled', True))),
+        'run_cms_detection': bool(get_setting(args, config, 'run_cms_detection', profile.get('run_cms_detection', True))),
         'run_nuclei': bool(get_setting(args, config, 'run_nuclei', profile.get('run_nuclei', True))),
         'run_nmap': bool(get_setting(args, config, 'use_nmap', profile.get('run_nmap', False)) or args.use_nmap),
         'validator_timeout': safe_int(get_setting(args, config, 'validator_timeout', profile['validator_timeout']), int(profile['validator_timeout'])),
@@ -375,6 +377,7 @@ def scan_one(target: str, args: argparse.Namespace, config: dict[str, Any], targ
     observed_only = bool(get_setting(args, config, 'observed_only', profile.get('observed_only', False)))
     browser_click_budget = safe_int(get_setting(args, config, 'browser_click_budget', 12), 12)
     browser_discovery_enabled = bool(get_setting(args, config, 'browser_discovery_enabled', profile.get('browser_discovery_enabled', True)))
+    run_cms_detection = bool(get_setting(args, config, 'run_cms_detection', profile.get('run_cms_detection', True)))
 
     target_paths = build_target_paths(targets_dir, target)
     report_paths = build_report_paths(target_paths['reports_dir'], report_formats, skip_reports)
@@ -417,6 +420,7 @@ def scan_one(target: str, args: argparse.Namespace, config: dict[str, Any], targ
         observed_only=observed_only,
         browser_click_budget=browser_click_budget,
         browser_discovery_enabled=browser_discovery_enabled,
+        run_cms_detection=run_cms_detection,
         run_nmap=use_nmap,
         nmap_top_ports=nmap_top_ports,
         nmap_args=nmap_args,

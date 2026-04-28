@@ -27,6 +27,7 @@ class ScanArtifacts:
     observed_api_calls: list[str] = field(default_factory=list)
     entry_response: Any | None = None
     shared_baseline: Any | None = None
+    cms_detections: list[Any] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -96,6 +97,7 @@ class ScanSettings:
     report_title: str = 'Informe de vulnerabilidades y misconfiguraciones'
     browser_click_budget: int = 12
     browser_discovery_enabled: bool = True
+    run_cms_detection: bool = True
 
 
 @dataclass(slots=True)

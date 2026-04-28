@@ -1,0 +1,40 @@
+FROM python:3.11-slim
+
+ARG NUCLEI_VERSION=3.3.9
+ARG TARGETARCH
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    NUCLEI_TEMPLATES_DIR=/root/nuclei-templates
+
+WORKDIR /workspace
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        git \
+        nmap \
+        unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN set -eux; \
+    arch="${TARGETARCH:-amd64}"; \
+    case "$arch" in \
+        amd64) nuclei_arch="linux_amd64" ;; \
+        arm64) nuclei_arch="linux_arm64" ;; \
+        *) echo "Unsupported TARGETARCH for nuclei: $arch" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL -o /tmp/nuclei.zip "https://github.com/projectdiscovery/nuclei/releases/download/v${NUCLEI_VERSION}/nuclei_${NUCLEI_VERSION}_${nuclei_arch}.zip"; \
+    unzip /tmp/nuclei.zip -d /tmp/nuclei; \
+    install -m 0755 /tmp/nuclei/nuclei /usr/local/bin/nuclei; \
+    rm -rf /tmp/nuclei /tmp/nuclei.zip; \
+    nuclei -version
+
+COPY requirements.txt /tmp/requirements.txt
+RUN pip install -r /tmp/requirements.txt
+
+RUN git clone --depth 1 https://github.com/projectdiscovery/nuclei-templates.git "$NUCLEI_TEMPLATES_DIR" \
+    && ln -s "$NUCLEI_TEMPLATES_DIR" /opt/nuclei-templates
+
+CMD ["python", "main.py", "--help"]

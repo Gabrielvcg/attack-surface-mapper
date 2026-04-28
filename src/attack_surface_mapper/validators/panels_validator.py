@@ -5,7 +5,7 @@ from urllib.parse import urljoin, urlparse
 from attack_surface_mapper.http_client import RequestError, build_http_session
 from attack_surface_mapper.models.vulnerability import Vulnerability
 from attack_surface_mapper.validators.base import BaseValidator
-from attack_surface_mapper.validators.http_fingerprint import baseline_fingerprint, looks_like_baseline, looks_like_login_surface, normalise_text
+from attack_surface_mapper.validators.http_fingerprint import baseline_fingerprint, is_static_asset_path, looks_like_baseline, looks_like_login_surface, looks_like_setup_surface, normalise_text
 
 
 class PanelsValidator(BaseValidator):
@@ -34,6 +34,8 @@ class PanelsValidator(BaseValidator):
         with build_http_session(backend=self.backend, mode=self.mode, timeout=self.timeout, user_agent=self.user_agent) as session:
             baseline = baseline if baseline is not None else (baseline_fingerprint(session, target, self.timeout) if self.use_baseline_probe else None)
             for path in self.paths:
+                if is_static_asset_path(path):
+                    continue
                 url = urljoin(target.rstrip('/') + '/', path.lstrip('/'))
                 try:
                     response = session.get(url, timeout=self.timeout, allow_redirects=True)
@@ -44,6 +46,8 @@ class PanelsValidator(BaseValidator):
                     continue
 
                 preview = normalise_text(response.text)
+                if looks_like_setup_surface(response, preview):
+                    continue
                 if path != '/login' and looks_like_login_surface(response, preview):
                     continue
                 include, confidence, reason, verification = self._classify(path, response, preview, baseline)
