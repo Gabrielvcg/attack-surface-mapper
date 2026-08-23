@@ -169,17 +169,17 @@ class APIValidator(BaseValidator):
         graphql_signature = ''
         if looks_like_login_surface(response, preview):
             title = 'API Surface Exposed'
-            description = 'Se ha detectado una superficie de API accesible pÃºblicamente.'
+            description = 'Se ha detectado una superficie de API accesible públicamente.'
             if path in {'/swagger', '/swagger-ui', '/api-docs'}:
                 title = 'Swagger UI Exposed'
-                description = 'Se ha detectado una interfaz de documentaciÃ³n Swagger accesible sin restricciones claras.'
+                description = 'Se ha detectado una interfaz de documentación Swagger accesible sin restricciones claras.'
             elif path == '/openapi.json':
                 title = 'OpenAPI Specification Exposed'
-                description = 'Se ha detectado un documento OpenAPI/Swagger accesible pÃºblicamente.'
+                description = 'Se ha detectado un documento OpenAPI/Swagger accesible públicamente.'
             elif path.startswith('/graphql'):
                 title = 'GraphQL Surface Exposed'
                 description = 'Se ha detectado un endpoint o interfaz GraphQL accesible.'
-            return False, 'low', 'respuesta parece una superficie de login pÃºblica', 'discarded', title, description, 'medium'
+            return False, 'low', 'respuesta parece una superficie de login pública', 'discarded', title, description, 'medium'
         score = 0
         reasons: list[str] = []
         if response.status_code in (200, 201, 202, 204):
