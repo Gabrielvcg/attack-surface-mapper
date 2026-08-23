@@ -1,4 +1,12 @@
-# attack_surface_mapper_project_v10.22
+# Attack Surface Mapper
+
+## v10.22.9 quality hardening
+
+- Repairs corrupted UTF-8 text in API/auth validation evidence so generated Spanish reports remain readable and professional.
+- Adds a minimal GitHub Actions quality gate for source compilation and the full pytest suite.
+- Adds a regression test that rejects mojibake markers in Python source files.
+- Aligns the package name, version and description with the public project identity.
+- Repairs legacy changelog encoding so the project history is readable.
 
 ## v10.22.8 polish
 
@@ -9,14 +17,14 @@
 - Genera mappings estables, NDJSON `_bulk` y helpers de ingesta para las tres vías pedidas por el tutor: manual/Kibana Dev Tools, `curl` y Python.
 - Reutiliza el contrato actual del hallazgo (`finding_id`, `correlation_id`, `priority_score`, `finding_role`, `validated`, `validation_basis`, etc.) y evita exportar `raw` completo para mantener los índices más estables.
 
-- Introduce un scoring estructurado (`scoring_version`, `priority_score`) basado en severidad, confianza, rol del hallazgo y base de validaciÃ³n, manteniendo la salida `low/medium/high/critical` pero haciÃ©ndola mÃ¡s estable y auditable.
-- Expone el score numÃ©rico y su razÃ³n en reportes, CSV, agregados y matriz de revisiÃ³n para facilitar comparativas futuras e ingest estructurado.
+- Introduce un scoring estructurado (`scoring_version`, `priority_score`) basado en severidad, confianza, rol del hallazgo y base de validación, manteniendo la salida `low/medium/high/critical` pero haciéndola más estable y auditable.
+- Expone el score numérico y su razón en reportes, CSV, agregados y matriz de revisión para facilitar comparativas futuras e ingest estructurado.
 - Ajusta `comparison.json` para detectar cambios en `priority_score` aunque la etiqueta de prioridad no cambie, mejorando el seguimiento fino entre runs.
 
-- Introduce una capa de validaciÃ³n explÃ­cita en el modelo de hallazgo con `finding_role`, `validated` y `validation_basis`, separando mejor descubrimiento, candidatos y evidencia validada.
-- Propaga esa semÃ¡ntica a `report.summary.json`, `aggregate_summary.json`, `comparison.json` y la matriz de revisiÃ³n para dejar el output estructurado mÃ¡s estable y mÃ¡s honesto.
-- Mantiene compatibilidad con hallazgos previos o JSON legacy: reporting, agregado y comparaciÃ³n infieren el rol de validaciÃ³n cuando el campo nuevo todavÃ­a no existe.
-- AmplÃ­a el golden set y la exportaciÃ³n de revisiÃ³n con `finding_role`, `validated` y `validation_basis` para afinar falsos positivos con una semÃ¡ntica mÃ¡s clara.
+- Introduce una capa de validación explícita en el modelo de hallazgo con `finding_role`, `validated` y `validation_basis`, separando mejor descubrimiento, candidatos y evidencia validada.
+- Propaga esa semántica a `report.summary.json`, `aggregate_summary.json`, `comparison.json` y la matriz de revisión para dejar el output estructurado más estable y más honesto.
+- Mantiene compatibilidad con hallazgos previos o JSON legacy: reporting, agregado y comparación infieren el rol de validación cuando el campo nuevo todavía no existe.
+- Amplía el golden set y la exportación de revisión con `finding_role`, `validated` y `validation_basis` para afinar falsos positivos con una semántica más clara.
 
 - Conserva el `debug_http_trace` de browser discovery y validación pasiva en una misma ejecución para facilitar análisis de ruido y troubleshooting.
 - Ajusta el resumen ejecutivo para que la nota sobre hallazgos altos/críticos confirmados dependa de los datos reales del run.
@@ -30,21 +38,21 @@
 - Estabiliza `report.summary.json`, `aggregate_summary.json` y `run_manifest.json` con secciones y claves más predecibles para futuro consumo estructurado.
 - Endurece `scripts/validate_labs.ps1` para validar artefactos generados, IDs estables y un mínimo configurable de hallazgos.
 - Reduce falsos positivos de `APIValidator` descartando pantallas de login servidas desde rutas como `/swagger` o `/graphql`.
-- Enriquece `comparison.json` y la secciÃ³n de comparativa en reportes con promociones, regresiones y cambios de confianza/verificaciÃ³n.
-- Alinea mejor `verification_status`, `needs_manual_validation` y prioridad para que un hallazgo `confirmed` no siga marcado como revisiÃ³n manual por inercia de categorÃ­a.
-- AÃ±ade una matriz de revisiÃ³n exportable (`reviews/lab_findings_review.csv`) para etiquetar hallazgos de labs como `verdadero`, `falso` o `dudoso` durante el afinado de falsos positivos.
-- Ajusta la priorizaciÃ³n de correlaciÃ³n para dar mÃ¡s peso a evidencia `confirmed` y evita que la mera multiplicidad de fuentes infle hallazgos todavÃ­a `likely`.
+- Enriquece `comparison.json` y la sección de comparativa en reportes con promociones, regresiones y cambios de confianza/verificación.
+- Alinea mejor `verification_status`, `needs_manual_validation` y prioridad para que un hallazgo `confirmed` no siga marcado como revisión manual por inercia de categoría.
+- Añade una matriz de revisión exportable (`reviews/lab_findings_review.csv`) para etiquetar hallazgos de labs como `verdadero`, `falso` o `dudoso` durante el afinado de falsos positivos.
+- Ajusta la priorización de correlación para dar más peso a evidencia `confirmed` y evita que la mera multiplicidad de fuentes infle hallazgos todavía `likely`.
 
 - Permite validar `passive-recon-enum` dentro del flujo repetible de labs con un override local (`config/examples/lab-passive-recon-enum.yml`) que desactiva Nuclei y mantiene el perfil comparable en Docker.
-- Evita que headers confirmados de severidad media, como CSP ausente, escalen a prioridad `high` solo por estar confirmados; la prioridad se reserva mejor para evidencia aplicativa o impacto mÃ¡s claro.
-- Endurece `APIValidator`, `PanelsValidator` y `SensitiveFilesValidator` contra superficies de login servidas desde rutas de docs, respuestas HTML que simulan ficheros y respuestas GraphQL demasiado dÃ©biles o indistinguibles del fallback.
-- Reordena `top_findings` y el agregado para que hallazgos confirmados de aplicaciÃ³n queden por delante de inventario, fingerprints y headers higiÃ©nicos cuando comparten prioridad similar.
+- Evita que headers confirmados de severidad media, como CSP ausente, escalen a prioridad `high` solo por estar confirmados; la prioridad se reserva mejor para evidencia aplicativa o impacto más claro.
+- Endurece `APIValidator`, `PanelsValidator` y `SensitiveFilesValidator` contra superficies de login servidas desde rutas de docs, respuestas HTML que simulan ficheros y respuestas GraphQL demasiado débiles o indistinguibles del fallback.
+- Reordena `top_findings` y el agregado para que hallazgos confirmados de aplicación queden por delante de inventario, fingerprints y headers higiénicos cuando comparten prioridad similar.
 
-- Acota mejor la prioridad de documentaciÃ³n y superficies API: `Swagger UI Exposed` deja de escalar a `critical`, `GraphQL Endpoint Accessible Without Authentication` se mantiene en `medium` cuando sigue en `likely`, y el inventario `Multiple API Endpoints Exposed` no compite como si fuese una confirmaciÃ³n de impacto.
-- Ajusta la matriz de revisiÃ³n para que headers de higiene y superficies de inventario API queden en `revisar` o `descubrimiento`, evitando priorizar por defecto hallazgos que todavÃ­a son de contexto o endurecimiento.
-- Separa mejor el reporting entre riesgo de aplicaciÃ³n, higiene/endurecimiento y descubrimiento: `report.summary.json` expone listas dedicadas (`top_risk_findings`, `top_hygiene_findings`, `top_discovery_findings`) y el markdown mueve headers/TLS a una secciÃ³n propia para que no compitan visualmente con acceso indebido real.
-- Ajusta `AuthValidator` para que rutas de superficie API como `/graphql`, `/swagger` o `/api-docs` no se expresen por defecto como fallo de autorizaciÃ³n: ahora se reportan como `api` (`GraphQL Surface Exposed`, `Swagger UI Exposed`, etc.) y se acotan a `likely/medium` salvo evidencia mÃ¡s fuerte.
-- Filtra `top_risk_findings` para dejar fuera señales de baja prioridad como CORS amplio `likely` cuando ya existen hallazgos medios/altos mÃ¡s accionables, manteniendo el summary centrado en lo que primero merece revisiÃ³n.
+- Acota mejor la prioridad de documentación y superficies API: `Swagger UI Exposed` deja de escalar a `critical`, `GraphQL Endpoint Accessible Without Authentication` se mantiene en `medium` cuando sigue en `likely`, y el inventario `Multiple API Endpoints Exposed` no compite como si fuese una confirmación de impacto.
+- Ajusta la matriz de revisión para que headers de higiene y superficies de inventario API queden en `revisar` o `descubrimiento`, evitando priorizar por defecto hallazgos que todavía son de contexto o endurecimiento.
+- Separa mejor el reporting entre riesgo de aplicación, higiene/endurecimiento y descubrimiento: `report.summary.json` expone listas dedicadas (`top_risk_findings`, `top_hygiene_findings`, `top_discovery_findings`) y el markdown mueve headers/TLS a una sección propia para que no compitan visualmente con acceso indebido real.
+- Ajusta `AuthValidator` para que rutas de superficie API como `/graphql`, `/swagger` o `/api-docs` no se expresen por defecto como fallo de autorización: ahora se reportan como `api` (`GraphQL Surface Exposed`, `Swagger UI Exposed`, etc.) y se acotan a `likely/medium` salvo evidencia más fuerte.
+- Filtra `top_risk_findings` para dejar fuera señales de baja prioridad como CORS amplio `likely` cuando ya existen hallazgos medios/altos más accionables, manteniendo el summary centrado en lo que primero merece revisión.
 
 ## v10.22.6 false-positive tuning
 

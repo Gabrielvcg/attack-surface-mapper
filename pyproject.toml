@@ -3,15 +3,20 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "nuclei-mvp-project-v10"
-version = "0.10.3"
-description = "Nuclei + validaciones propias + correlación + reporting + Nmap + Scrapling por modos (fetcher/dynamic)"
+name = "attack-surface-mapper"
+version = "10.22.9"
+description = "Pipeline-based attack-surface discovery, validation, correlation, and reporting."
 requires-python = ">=3.11"
 dependencies = [
   "requests>=2.31.0",
   "PyYAML>=6.0.1",
   "scrapling[fetchers]>=0.4.2",
   "playwright>=1.52.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.0,<9",
 ]
 
 [tool.pytest.ini_options]

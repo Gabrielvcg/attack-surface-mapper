@@ -178,7 +178,7 @@ class AuthValidator(BaseValidator):
                     description=description,
                     severity=severity,
                     target=response.url,
-                    evidence=f'GET {response.url} devolviÃ³ {response.status_code}; validaciÃ³n={reason}',
+                    evidence=f'GET {response.url} devolvió {response.status_code}; validación={reason}',
                     cwe=['CWE-200'],
                     tags=['api', 'exposure'],
                     template_id=f"custom-auth-open-{path.strip('/') or 'root'}",
