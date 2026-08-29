@@ -7,7 +7,7 @@ from attack_surface_mapper.analysis import compare_scans, correlate_vulnerabilit
 from attack_surface_mapper.collectors.crawling import BrowserDiscoveryCollector, CrawlerCollector
 from attack_surface_mapper.collectors.nmap import NmapCollector
 from attack_surface_mapper.collectors.nuclei import NucleiCollector
-from attack_surface_mapper.collectors.web import RequestError, get_debug_trace, http_get, reset_debug_trace, set_debug_trace_enabled
+from attack_surface_mapper.collectors.web import RequestError, add_debug_trace, build_http_session, get_debug_trace, http_get, reset_debug_trace, set_debug_trace_enabled
 from attack_surface_mapper.core import ScanContext
 from attack_surface_mapper.reporting import ReportGenerator
 from attack_surface_mapper.utils.io import save_vulnerabilities_json
@@ -17,6 +17,7 @@ from attack_surface_mapper.validators.debug_probe import probe_target
 from attack_surface_mapper.validators.discovery import analyse_documents, findings_from_analysis
 from attack_surface_mapper.validators.fingerprint_validator import FingerprintValidator
 from attack_surface_mapper.validators.headers_validator import HeadersValidator
+from attack_surface_mapper.validators.http_fingerprint import baseline_fingerprint
 from attack_surface_mapper.validators.panels_validator import PanelsValidator
 from attack_surface_mapper.validators.secrets_validator import SecretsValidator
 from attack_surface_mapper.validators.sensitive_files_validator import SensitiveFilesValidator
@@ -28,6 +29,25 @@ class PipelineStage:
 
     def run(self, context: ScanContext) -> ScanContext:  # pragma: no cover - interface only
         return context
+
+
+def _ensure_http_trace(context: ScanContext) -> None:
+    if not context.settings.debug:
+        return
+    if not context.debug.enabled:
+        context.debug.enabled = True
+        set_debug_trace_enabled(True)
+        reset_debug_trace()
+
+
+def _merge_http_trace(context: ScanContext) -> None:
+    if not context.settings.debug:
+        return
+    merged = list(context.debug.http_trace)
+    for event in get_debug_trace():
+        if event not in merged:
+            merged.append(event)
+    context.debug.http_trace = merged
 
 
 class NucleiStage(PipelineStage):
@@ -102,6 +122,7 @@ class BrowserDiscoveryStage(PipelineStage):
         if not s.run_crawl or not s.browser_discovery_enabled:
             context.debug.counts[self.name] = 0
             return context
+        _ensure_http_trace(context)
         context.mark_stage(self.name)
         collector_backend = (s.crawler_backend or s.http_backend)
         context.mark_collector(f"browser:{collector_backend}")
@@ -119,7 +140,8 @@ class BrowserDiscoveryStage(PipelineStage):
             )
             result = collector.collect(context.target)
         except Exception as exc:
-            context.debug.http_trace.append({'component': 'browser_discovery', 'event': 'collector_error', 'error': str(exc)})
+            add_debug_trace({'component': 'browser_discovery', 'event': 'collector_error', 'error': str(exc)})
+            _merge_http_trace(context)
             result = None
         if result is None:
             context.debug.counts[self.name] = 0
@@ -137,6 +159,7 @@ class BrowserDiscoveryStage(PipelineStage):
         for api_url in result.observed_api_calls:
             context.add_api_call(api_url)
         context.debug.counts[self.name] = len(result.observed_urls) + len(result.observed_api_calls)
+        _merge_http_trace(context)
         return context
 
 class PassiveValidationStage(PipelineStage):
@@ -149,21 +172,32 @@ class PassiveValidationStage(PipelineStage):
             return context
         context.mark_stage(self.name)
         context.mark_collector(context.settings.http_backend or 'requests')
-        context.debug.enabled = bool(s.debug)
-        set_debug_trace_enabled(bool(s.debug))
-        reset_debug_trace()
+        _ensure_http_trace(context)
 
-        preloaded_response = None
-        if s.observed_only:
-            preloaded_response = context.artifacts.entry_response
-            if preloaded_response is not None:
+        preloaded_response = context.artifacts.entry_response
+        if preloaded_response is not None:
+            context.add_observed(preloaded_response.url)
+        elif s.observed_only:
+            try:
+                preloaded_response = http_get(context.target, timeout=s.validator_timeout, allow_redirects=True, user_agent=s.user_agent, backend=s.http_backend, mode=s.http_mode)
                 context.add_observed(preloaded_response.url)
-            else:
-                try:
-                    preloaded_response = http_get(context.target, timeout=s.validator_timeout, allow_redirects=True, user_agent=s.user_agent, backend=s.http_backend, mode=s.http_mode)
-                    context.add_observed(preloaded_response.url)
-                except RequestError:
-                    preloaded_response = None
+            except RequestError:
+                preloaded_response = None
+
+        shared_baseline = context.artifacts.shared_baseline
+        baseline_candidates_enabled = any((s.run_sensitive_files, s.run_panels, s.run_auth, s.run_api))
+        if shared_baseline is None and s.baseline_probe and baseline_candidates_enabled:
+            try:
+                with build_http_session(backend=s.http_backend, mode=s.http_mode, timeout=s.validator_timeout, user_agent=s.user_agent) as baseline_session:
+                    shared_baseline = baseline_fingerprint(baseline_session, context.target, s.validator_timeout)
+            except RequestError:
+                shared_baseline = None
+            context.artifacts.shared_baseline = shared_baseline
+            add_debug_trace({
+                'component': 'passive_validation',
+                'event': 'shared_baseline_computed',
+                'available': bool(shared_baseline),
+            })
 
         def _safe_collect(name: str, fn) -> None:
             try:
@@ -184,7 +218,7 @@ class PassiveValidationStage(PipelineStage):
             context.add_findings(items)
         _safe_collect('fingerprint', lambda: FingerprintValidator(timeout=s.validator_timeout, backend=s.http_backend, mode=s.http_mode, user_agent=s.user_agent).run(context.target, response=preloaded_response))
         if s.run_sensitive_files:
-            _safe_collect('sensitive_files', lambda: SensitiveFilesValidator(timeout=max(3, min(s.validator_timeout, 6)), backend=s.http_backend, mode=s.http_mode, user_agent=s.user_agent, use_baseline_probe=s.baseline_probe).run(context.target))
+            _safe_collect('sensitive_files', lambda: SensitiveFilesValidator(timeout=max(3, min(s.validator_timeout, 6)), backend=s.http_backend, mode=s.http_mode, user_agent=s.user_agent, use_baseline_probe=s.baseline_probe).run(context.target, baseline=shared_baseline))
 
         crawled_documents: dict[str, str] = context.artifacts.crawled_documents or {}
         if s.run_crawl and not crawled_documents and not s.observed_only:
@@ -206,15 +240,15 @@ class PassiveValidationStage(PipelineStage):
         if s.run_panels:
             seed_panel_paths = tuple(s.panel_paths) if s.panel_paths else ()
             effective_panel_paths = tuple(dict.fromkeys([*seed_panel_paths, *discovery_analysis.panel_paths, *(observed_auth_paths if s.observed_only else ())])) or None
-            _safe_collect('panels', lambda: PanelsValidator(timeout=max(3, min(s.validator_timeout, 6)), paths=effective_panel_paths, backend=s.http_backend, mode=s.http_mode, user_agent=s.user_agent, use_baseline_probe=s.baseline_probe).run(context.target))
+            _safe_collect('panels', lambda: PanelsValidator(timeout=max(3, min(s.validator_timeout, 6)), paths=effective_panel_paths, backend=s.http_backend, mode=s.http_mode, user_agent=s.user_agent, use_baseline_probe=s.baseline_probe).run(context.target, baseline=shared_baseline))
         if s.run_auth:
             auth_seed = AuthValidator.DEFAULT_PROTECTED_PATHS if enum_mode else ()
             effective_auth_paths = tuple(dict.fromkeys([*auth_seed, *discovery_analysis.auth_paths, *observed_auth_paths]))
-            _safe_collect('auth', lambda: AuthValidator(timeout=max(3, min(s.validator_timeout, 6)), paths=effective_auth_paths, backend=s.http_backend, mode=s.http_mode, user_agent=s.user_agent, use_baseline_probe=s.baseline_probe, observed_only=s.observed_only).run(context.target))
+            _safe_collect('auth', lambda: AuthValidator(timeout=max(3, min(s.validator_timeout, 6)), paths=effective_auth_paths, backend=s.http_backend, mode=s.http_mode, user_agent=s.user_agent, use_baseline_probe=s.baseline_probe, observed_only=s.observed_only).run(context.target, baseline=shared_baseline))
         if s.run_api:
             api_seed = APIValidator.DEFAULT_PATHS if enum_mode else ()
             effective_api_paths = tuple(dict.fromkeys([*api_seed, *discovery_analysis.api_paths, *observed_api_paths]))
-            _safe_collect('api', lambda: APIValidator(timeout=max(3, min(s.validator_timeout, 6)), paths=effective_api_paths, backend=s.http_backend, mode=s.http_mode, user_agent=s.user_agent, use_baseline_probe=s.baseline_probe, observed_only=s.observed_only).run(context.target))
+            _safe_collect('api', lambda: APIValidator(timeout=max(3, min(s.validator_timeout, 6)), paths=effective_api_paths, backend=s.http_backend, mode=s.http_mode, user_agent=s.user_agent, use_baseline_probe=s.baseline_probe, observed_only=s.observed_only).run(context.target, baseline=shared_baseline))
 
         discovery_findings = findings_from_analysis(context.target, discovery_analysis)
         context.debug.counts['discovery'] = len(discovery_findings)
@@ -240,7 +274,7 @@ class PassiveValidationStage(PipelineStage):
         context.debug.counts['crawl_candidate_paths'] = len(discovery_analysis.candidate_paths)
         context.debug.counts['crawl_forms'] = len(discovery_analysis.forms)
         context.debug.counts['crawl_js_hints'] = len(discovery_analysis.js_hints)
-        context.debug.http_trace = get_debug_trace()
+        _merge_http_trace(context)
         return context
 
 

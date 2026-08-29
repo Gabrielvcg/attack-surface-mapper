@@ -1,0 +1,18 @@
+profile: passive-recon-enum
+
+nuclei:
+  enabled: false
+
+validators:
+  baseline_probe: true
+  observed_only: false
+  panels: true
+  auth: true
+  api: true
+  sensitive_files: true
+
+modules:
+  headers: true
+  tls: true
+  crawl: true
+  secrets: true

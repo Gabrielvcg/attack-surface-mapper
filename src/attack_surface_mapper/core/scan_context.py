@@ -26,6 +26,7 @@ class ScanArtifacts:
     observed_actions: list[dict[str, Any]] = field(default_factory=list)
     observed_api_calls: list[str] = field(default_factory=list)
     entry_response: Any | None = None
+    shared_baseline: Any | None = None
 
 
 @dataclass(slots=True)

@@ -13,13 +13,14 @@ class PanelsValidator(BaseValidator):
         '/admin',
         '/login',
         '/dashboard',
+        '/management',
         '/swagger',
         '/swagger-ui',
         '/actuator',
         '/metrics',
     )
 
-    def __init__(self, timeout: int = 5, paths: tuple[str, ...] | None = None, *, backend: str = 'auto', mode: str = 'passive', user_agent: str = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36', use_baseline_probe: bool = True) -> None:
+    def __init__(self, timeout: int = 5, paths: tuple[str, ...] | None = None, *, backend: str = 'requests', mode: str = 'passive', user_agent: str = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36', use_baseline_probe: bool = True) -> None:
         self.timeout = timeout
         self.paths = paths or self.DEFAULT_PATHS
         self.backend = backend
@@ -27,11 +28,11 @@ class PanelsValidator(BaseValidator):
         self.user_agent = user_agent
         self.use_baseline_probe = use_baseline_probe
 
-    def run(self, target: str) -> list[Vulnerability]:
+    def run(self, target: str, baseline=None) -> list[Vulnerability]:
         vulnerabilities: list[Vulnerability] = []
         parsed = urlparse(target)
         with build_http_session(backend=self.backend, mode=self.mode, timeout=self.timeout, user_agent=self.user_agent) as session:
-            baseline = baseline_fingerprint(session, target, self.timeout) if self.use_baseline_probe else None
+            baseline = baseline if baseline is not None else (baseline_fingerprint(session, target, self.timeout) if self.use_baseline_probe else None)
             for path in self.paths:
                 url = urljoin(target.rstrip('/') + '/', path.lstrip('/'))
                 try:
@@ -43,7 +44,7 @@ class PanelsValidator(BaseValidator):
                     continue
 
                 preview = normalise_text(response.text)
-                if path in {'/admin', '/dashboard'} and looks_like_login_surface(response, preview):
+                if path != '/login' and looks_like_login_surface(response, preview):
                     continue
                 include, confidence, reason, verification = self._classify(path, response, preview, baseline)
                 if not include:
@@ -54,19 +55,19 @@ class PanelsValidator(BaseValidator):
                     Vulnerability(
                         source='custom-panel-check',
                         title=self._build_title(path, response),
-                        description=f'Se ha detectado un panel o endpoint potencialmente sensible accesible en {final_url}.',
+                        description=self._description_for(path, final_url),
                         severity=self._severity_for(path, confidence),
                         target=final_url,
                         evidence=f'Status {response.status_code} en {final_url}; validación={reason}',
                         cwe=['CWE-200'],
-                        tags=['panel', 'exposure'],
-                        template_id=f'custom-panel-{path.strip('/') or "root"}',
+                        tags=self._tags_for(path),
+                        template_id=f"custom-panel-{path.strip('/') or 'root'}",
                         matched_at=final_url,
                         host=parsed.hostname,
                         port=str(parsed.port) if parsed.port else None,
                         scheme=parsed.scheme,
                         type='http',
-                        category='panel-exposure',
+                        category=self._category_for(path),
                         confidence=confidence,
                         needs_manual_validation=verification != 'confirmed',
                         verification_status=verification,
@@ -96,10 +97,10 @@ class PanelsValidator(BaseValidator):
             if 'text/plain' in content_type:
                 score += 1
                 reasons.append('content-type text/plain')
-        elif path == '/actuator':
+        elif path in {'/actuator', '/management'}:
             if any(token in body_preview for token in ('"_links"', 'actuator', '"status"', 'health')):
                 score += 3
-                reasons.append('marcadores actuator encontrados')
+                reasons.append('marcadores operativos encontrados')
             if 'json' in content_type:
                 score += 1
                 reasons.append('content-type json')
@@ -135,9 +136,9 @@ class PanelsValidator(BaseValidator):
 
     @staticmethod
     def _severity_for(path: str, confidence: str) -> str:
-        if confidence == 'high' and path in {'/metrics', '/actuator'}:
+        if confidence == 'high' and path in {'/metrics', '/actuator', '/management'}:
             return 'medium'
-        if path in {'/metrics', '/actuator', '/admin', '/dashboard', '/swagger', '/swagger-ui'}:
+        if path in {'/metrics', '/actuator', '/management', '/admin', '/dashboard', '/swagger', '/swagger-ui'}:
             return 'medium'
         return 'low'
 
@@ -148,6 +149,8 @@ class PanelsValidator(BaseValidator):
             return 'Exposed Metrics Endpoint'
         if path == '/actuator':
             return 'Exposed Actuator Endpoint'
+        if path == '/management':
+            return 'Exposed Management Endpoint'
         if path in {'/swagger', '/swagger-ui'}:
             return 'Exposed API Documentation Panel'
         if path == '/admin':
@@ -155,5 +158,23 @@ class PanelsValidator(BaseValidator):
         if path == '/dashboard':
             return f'Accessible Dashboard ({status})'
         if path == '/login':
-            return f'Public Login Panel ({status})'
+            return f'Login Surface Discovered ({status})'
         return f'Accessible Sensitive Endpoint ({status})'
+
+    @staticmethod
+    def _category_for(path: str) -> str:
+        if path == '/login':
+            return 'discovery'
+        return 'panel-exposure'
+
+    @staticmethod
+    def _tags_for(path: str) -> list[str]:
+        if path == '/login':
+            return ['panel', 'auth', 'discovery']
+        return ['panel', 'exposure']
+
+    @staticmethod
+    def _description_for(path: str, final_url: str) -> str:
+        if path == '/login':
+            return f'Se ha descubierto una superficie de autenticación pública en {final_url}; se registra como inventario de superficie, no como acceso indebido.'
+        return f'Se ha detectado un panel o endpoint potencialmente sensible accesible en {final_url}.'
