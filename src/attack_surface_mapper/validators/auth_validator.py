@@ -9,6 +9,14 @@ from attack_surface_mapper.validators.http_fingerprint import baseline_fingerpri
 
 
 class AuthValidator(BaseValidator):
+    API_SURFACE_PATHS: tuple[str, ...] = (
+        '/swagger',
+        '/swagger-ui',
+        '/openapi.json',
+        '/graphql',
+        '/api-docs',
+    )
+
     DEFAULT_PROTECTED_PATHS: tuple[str, ...] = (
         '/admin',
         '/dashboard',
@@ -33,7 +41,7 @@ class AuthValidator(BaseValidator):
         '/admin/login',
     )
 
-    def __init__(self, timeout: int = 6, paths: tuple[str, ...] | None = None, *, backend: str = 'auto', mode: str = 'passive', user_agent: str = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36', use_baseline_probe: bool = True, observed_only: bool = False) -> None:
+    def __init__(self, timeout: int = 6, paths: tuple[str, ...] | None = None, *, backend: str = 'requests', mode: str = 'passive', user_agent: str = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36', use_baseline_probe: bool = True, observed_only: bool = False) -> None:
         self.timeout = timeout
         self.paths = paths or self.DEFAULT_PROTECTED_PATHS
         self.backend = backend
@@ -42,7 +50,7 @@ class AuthValidator(BaseValidator):
         self.use_baseline_probe = use_baseline_probe
         self.observed_only = observed_only
 
-    def run(self, target: str) -> list[Vulnerability]:
+    def run(self, target: str, baseline=None) -> list[Vulnerability]:
         findings: list[Vulnerability] = []
         parsed_target = urlparse(target)
         with build_http_session(backend=self.backend, mode=self.mode, timeout=self.timeout, user_agent=self.user_agent) as session:
@@ -52,7 +60,7 @@ class AuthValidator(BaseValidator):
             host = final_parsed.hostname or parsed_target.hostname
             port = str(final_parsed.port) if final_parsed.port else (str(parsed_target.port) if parsed_target.port else None)
             scheme = final_parsed.scheme or parsed_target.scheme
-            baseline = baseline_fingerprint(session, target, self.timeout) if self.use_baseline_probe else None
+            baseline = baseline if baseline is not None else (baseline_fingerprint(session, target, self.timeout) if self.use_baseline_probe else None)
 
             findings.extend(self._check_cookie_flags(response, final_url, host, port, scheme))
             if not self.observed_only:
@@ -65,7 +73,11 @@ class AuthValidator(BaseValidator):
         for cookie_header in raw_cookie_headers:
             lower_header = cookie_header.lower()
             name = cookie_header.split('=', 1)[0].strip() or 'cookie'
-            if 'httponly' not in lower_header:
+            is_session_cookie = self._is_likely_session_cookie(name)
+            is_csrf_cookie = self._is_csrf_cookie(name)
+            if not is_session_cookie and not is_csrf_cookie:
+                continue
+            if is_session_cookie and 'httponly' not in lower_header:
                 findings.append(Vulnerability(source='custom-auth-check', title='Cookie Without HttpOnly Flag', description='La aplicación establece una cookie sin el flag HttpOnly.', severity='medium', target=url, evidence=f'Set-Cookie: {self._truncate(cookie_header)}', cwe=['CWE-1004'], tags=['auth', 'cookie', 'session'], template_id=f'custom-auth-cookie-httponly-{name.lower()}', matched_at=url, host=host, port=port, scheme=scheme, type='http', category='authentication', confidence='high', verification_status='confirmed'))
             if (scheme == 'https') and ('secure' not in lower_header):
                 findings.append(Vulnerability(source='custom-auth-check', title='Cookie Without Secure Flag', description='La aplicación HTTPS establece una cookie sin el flag Secure.', severity='medium', target=url, evidence=f'Set-Cookie: {self._truncate(cookie_header)}', cwe=['CWE-614'], tags=['auth', 'cookie', 'session'], template_id=f'custom-auth-cookie-secure-{name.lower()}', matched_at=url, host=host, port=port, scheme=scheme, type='http', category='authentication', confidence='high', verification_status='confirmed'))
@@ -147,6 +159,34 @@ class AuthValidator(BaseValidator):
                 continue
             include, confidence, reason, verification = self._classify_open_access(path, response, body_preview, baseline)
             if not include:
+                continue
+            if path in self.API_SURFACE_PATHS:
+                if verification == 'confirmed':
+                    verification = 'likely'
+                    reason = f'{reason}; superficie api pública no demuestra acceso privilegiado por sí sola'
+                if confidence == 'high':
+                    confidence = 'medium'
+                title, description, severity = self._api_surface_metadata(path)
+                findings.append(Vulnerability(
+                    source='custom-auth-check',
+                    title=title,
+                    description=description,
+                    severity=severity,
+                    target=response.url,
+                    evidence=f'GET {response.url} devolvió {response.status_code}; validación={reason}',
+                    cwe=['CWE-200'],
+                    tags=['api', 'exposure'],
+                    template_id=f"custom-auth-open-{path.strip('/') or 'root'}",
+                    matched_at=response.url,
+                    host=host,
+                    port=port,
+                    scheme=scheme,
+                    type='http',
+                    category='api',
+                    confidence=confidence,
+                    needs_manual_validation=verification != 'confirmed',
+                    verification_status=verification,
+                ))
                 continue
             endpoint_name = self._endpoint_name(path)
             findings.append(Vulnerability(
@@ -250,6 +290,32 @@ class AuthValidator(BaseValidator):
         return mapping.get(path, f'Endpoint {path}')
 
     @staticmethod
+    def _api_surface_metadata(path: str) -> tuple[str, str, str]:
+        if path in {'/swagger', '/swagger-ui', '/api-docs'}:
+            return (
+                'Swagger UI Exposed',
+                'Se ha detectado una interfaz de documentación o superficie API accesible sin restricciones claras.',
+                'medium',
+            )
+        if path == '/openapi.json':
+            return (
+                'OpenAPI Specification Exposed',
+                'Se ha detectado un documento OpenAPI/Swagger accesible públicamente.',
+                'medium',
+            )
+        if path == '/graphql':
+            return (
+                'GraphQL Surface Exposed',
+                'Se ha detectado una superficie GraphQL accesible sin evidencia suficiente de control de acceso fuerte.',
+                'medium',
+            )
+        return (
+            'API Surface Exposed',
+            f'Se ha detectado una superficie de API accesible públicamente en {path}.',
+            'medium',
+        )
+
+    @staticmethod
     def _extract_set_cookie_headers(response) -> list[str]:
         raw = getattr(response, 'raw', None)
         if raw and hasattr(raw, 'headers'):
@@ -263,6 +329,18 @@ class AuthValidator(BaseValidator):
     @staticmethod
     def _truncate(value: str, max_length: int = 160) -> str:
         return value if len(value) <= max_length else value[:max_length] + '...[truncated]'
+
+    @staticmethod
+    def _is_csrf_cookie(name: str) -> bool:
+        lowered = (name or '').strip().lower()
+        return any(token in lowered for token in ('csrf', 'xsrf'))
+
+    @classmethod
+    def _is_likely_session_cookie(cls, name: str) -> bool:
+        lowered = (name or '').strip().lower()
+        if cls._is_csrf_cookie(lowered):
+            return False
+        return any(token in lowered for token in ('session', 'sess', 'sid', 'jwt', 'auth', 'access', 'refresh', 'remember', 'login'))
 
     @classmethod
     def _is_public_auth_entry(cls, path: str, response_url: str, body_preview: str) -> bool:

@@ -3,9 +3,21 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "nuclei-mvp-project-v10"
-version = "0.10.3"
-description = "Nuclei + validaciones propias + correlación + reporting + Nmap + Scrapling por modos (fetcher/dynamic)"
+name = "attack-surface-mapper"
+version = "10.22.10"
+description = "Pipeline-based attack-surface discovery, validation, correlation, and reporting."
+readme = "README.md"
+license = {file = "LICENSE"}
+authors = [{name = "Gabriel Vacaro Goytia"}]
+keywords = ["appsec", "attack-surface", "security-automation", "nuclei", "nmap", "reconnaissance"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Information Technology",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Topic :: Security",
+]
 requires-python = ">=3.11"
 dependencies = [
   "requests>=2.31.0",
@@ -13,6 +25,16 @@ dependencies = [
   "scrapling[fetchers]>=0.4.2",
   "playwright>=1.52.0",
 ]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.0,<9",
+]
+
+[project.urls]
+Documentation = "https://github.com/Gabrielvcg/attack-surface-mapper/tree/main/docs"
+Issues = "https://github.com/Gabrielvcg/attack-surface-mapper/issues"
+Repository = "https://github.com/Gabrielvcg/attack-surface-mapper"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

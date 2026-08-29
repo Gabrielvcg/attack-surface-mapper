@@ -15,6 +15,7 @@ env/
 
 # Local execution outputs
 scans/
+reviews/
 *.log
 
 # Tooling and local state

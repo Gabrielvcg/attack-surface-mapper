@@ -8,10 +8,28 @@ from pathlib import Path
 from typing import Iterable
 
 from attack_surface_mapper.orchestrator import ScanResult
+from attack_surface_mapper.models.vulnerability import Vulnerability
+from attack_surface_mapper.reporting.review_matrix import review_bucket_for_finding
 
 
 NETWORK_DISCOVERY_CATEGORIES = {'network-service', 'database', 'remote-access', 'message-broker', 'admin-surface', 'web-service', 'file-transfer', 'search-service'}
+PRIORITY_LABELS = ('critical', 'high', 'medium', 'low')
+SEVERITY_LABELS = ('critical', 'high', 'medium', 'low', 'info', 'unknown')
 _PRIORITY_ORDER = {'critical': 4, 'high': 3, 'medium': 2, 'low': 1}
+_PRIORITY_SORT = {'critical': 0, 'high': 1, 'medium': 2, 'low': 3}
+_SEVERITY_SORT = {'critical': 0, 'high': 1, 'medium': 2, 'low': 3, 'info': 4, 'unknown': 5}
+_VERIFICATION_SORT = {'confirmed': 0, 'likely': 1, 'needs_manual_validation': 2, 'heuristic': 3, 'discarded': 4}
+_CONFIDENCE_SORT = {'high': 0, 'medium': 1, 'low': 2}
+_CATEGORY_SORT = {
+    'authentication': 0,
+    'api': 1,
+    'panel-exposure': 2,
+    'sensitive-file': 3,
+    'secret': 4,
+    'tls': 5,
+    'headers': 6,
+    'discovery': 7,
+}
 _IPV4_RE = re.compile(r'^(?:\d{1,3}\.){3}\d{1,3}$')
 
 
@@ -25,21 +43,78 @@ def _best_severity(current: str | None, candidate: str | None) -> str | None:
     return _best_priority(current, candidate)
 
 
+def _stable_counts(counter: Counter, labels: tuple[str, ...]) -> dict[str, int]:
+    return {label: int(counter.get(label, 0)) for label in labels}
+
+
 def _is_ipv4(value: str | None) -> bool:
     return bool(value and _IPV4_RE.match(value))
+
+
+def _finding_role_record(item: dict) -> str:
+    explicit_role = str(item.get('finding_role') or '').lower()
+    if explicit_role:
+        return explicit_role
+    title = str(item.get('title') or '').lower()
+    category = str(item.get('category') or '').lower()
+    kind = str(item.get('kind') or '').lower()
+    verification = str(item.get('verification_status') or '').lower()
+    if (
+        kind == 'discovery'
+        or category == 'discovery'
+        or title.startswith('multiple api endpoints exposed')
+        or title.startswith('protected api surface discovered')
+        or title.startswith('multiple client-side api references observed')
+        or title == 'client-side api reference observed'
+        or title.startswith('technology fingerprint detected')
+    ):
+        return 'discovery'
+    if bool(item.get('validated')) or verification == 'confirmed':
+        return 'validated'
+    if kind == 'validation' or verification in {'likely', 'needs_manual_validation', 'heuristic'}:
+        return 'candidate'
+    return ''
 
 
 def _derive_target_asset_hosts(results: Iterable[ScanResult]) -> dict[str, str | None]:
     mapping: dict[str, str | None] = {}
     for result in results:
-        ips = sorted({v.host for v in result.vulnerabilities if _is_ipv4(v.host)})
+        ips = sorted({
+            v.asset_host_resolved
+            for v in result.vulnerabilities
+            if _is_ipv4(v.asset_host_resolved)
+        } | {
+            v.host
+            for v in result.vulnerabilities
+            if _is_ipv4(v.host)
+        })
         mapping[result.target] = ips[0] if len(ips) == 1 else None
     return mapping
 
 
+def _display_asset_host(result_target: str, vuln, target_asset_hosts: dict[str, str | None]) -> str:
+    if vuln.asset_host:
+        return str(vuln.asset_host).lower()
+    if vuln.target_host_original:
+        return str(vuln.target_host_original).lower()
+    if vuln.host:
+        return str(vuln.host).lower()
+    location = str(vuln.matched_at or vuln.target or '')
+    if '://' in location:
+        from urllib.parse import urlparse
+        parsed = urlparse(location)
+        if parsed.hostname:
+            return str(parsed.hostname).lower()
+    return target_asset_hosts.get(result_target) or str(location).lower()
+
+
 def _canonical_asset_host(result_target: str, vuln, target_asset_hosts: dict[str, str | None]) -> str:
+    if _is_ipv4(vuln.asset_host_resolved):
+        return str(vuln.asset_host_resolved)
     if _is_ipv4(vuln.host):
         return str(vuln.host)
+    if vuln.asset_host:
+        return str(vuln.asset_host).lower()
     resolved = target_asset_hosts.get(result_target)
     if resolved:
         return resolved
@@ -60,6 +135,72 @@ def _network_title_key(vuln) -> str:
     return title
 
 
+def _is_inventory_like_record(item: dict) -> bool:
+    title = str(item.get('title') or '').lower()
+    category = str(item.get('category') or '').lower()
+    finding_role = _finding_role_record(item)
+    return (
+        finding_role == 'discovery'
+        or category == 'discovery'
+        or title.startswith('multiple api endpoints exposed')
+        or title.startswith('protected api surface discovered')
+        or title.startswith('multiple client-side api references observed')
+        or title == 'client-side api reference observed'
+        or title.startswith('technology fingerprint detected')
+    )
+
+
+def _top_finding_bucket(item: dict) -> int:
+    if _is_inventory_like_record(item):
+        return 3
+    if str(item.get('category') or '').lower() == 'headers':
+        return 2
+    if bool(item.get('validated')) or _finding_role_record(item) == 'validated':
+        return 0
+    return 1
+
+
+def _split_aggregate_findings(items: list[dict]) -> tuple[list[dict], list[dict], list[dict], list[dict], list[dict]]:
+    actionable_risk: list[dict] = []
+    review_surface: list[dict] = []
+    hygiene: list[dict] = []
+    network: list[dict] = []
+    discovery: list[dict] = []
+    for item in items:
+        category = str(item.get('category') or '').lower()
+        if category in NETWORK_DISCOVERY_CATEGORIES:
+            network.append(item)
+            continue
+        if category == 'discovery':
+            discovery.append(item)
+            continue
+        if category in {'headers', 'tls'}:
+            hygiene.append(item)
+            continue
+        bucket = review_bucket_for_finding(item)
+        if bucket == 'priorizar':
+            actionable_risk.append(item)
+        elif bucket == 'descubrimiento':
+            discovery.append(item)
+        else:
+            review_surface.append(item)
+    return actionable_risk, review_surface, hygiene, network, discovery
+
+
+def _top_finding_sort_key(item: dict) -> tuple:
+    return (
+        _PRIORITY_SORT.get(str(item.get('priority') or '').lower(), 4),
+        -int(item.get('priority_score') or 0),
+        _top_finding_bucket(item),
+        _VERIFICATION_SORT.get(str(item.get('verification_status') or '').lower(), 5),
+        _CATEGORY_SORT.get(str(item.get('category') or '').lower(), 98),
+        _SEVERITY_SORT.get(str(item.get('severity') or '').lower(), 6),
+        _CONFIDENCE_SORT.get(str(item.get('confidence') or '').lower(), 3),
+        -int(item.get('target_count') or 1),
+        str(item.get('title') or ''),
+    )
+
+
 def _aggregate_key(result_target: str, vuln, target_asset_hosts: dict[str, str | None]) -> tuple[str, str, str, str]:
     category = (vuln.category or 'uncategorised').lower()
     title = vuln.title or 'Unknown finding'
@@ -71,6 +212,7 @@ def _aggregate_key(result_target: str, vuln, target_asset_hosts: dict[str, str |
 
 def _build_finding_record(result_target: str, vuln, target_asset_hosts: dict[str, str | None]) -> dict:
     canonical_host = _canonical_asset_host(result_target, vuln, target_asset_hosts)
+    display_host = _display_asset_host(result_target, vuln, target_asset_hosts)
     location = vuln.matched_at or vuln.target
     if (vuln.category or '').lower() in NETWORK_DISCOVERY_CATEGORIES and canonical_host and vuln.port:
         location = f'{canonical_host}:{vuln.port}'
@@ -78,15 +220,29 @@ def _build_finding_record(result_target: str, vuln, target_asset_hosts: dict[str
         'target': result_target,
         'location': location,
         'title': vuln.title,
+        'finding_id': vuln.finding_id,
+        'correlation_id': vuln.correlation_id,
+        'scoring_version': vuln.scoring_version,
         'priority': vuln.priority,
+        'priority_score': vuln.priority_score,
+        'priority_reason': vuln.priority_reason,
         'severity': vuln.severity,
         'category': vuln.category,
+        'kind': vuln.kind,
+        'finding_role': vuln.finding_role,
+        'validated': vuln.validated,
+        'validation_basis': vuln.validation_basis,
+        'confidence': vuln.confidence,
         'verification_status': vuln.verification_status,
+        'source_count': vuln.source_count,
+        'evidence_summary': vuln.evidence_summary,
         'recommendation': vuln.recommendation,
         'targets': [result_target],
-        'asset_host': canonical_host,
-        'asset_port': vuln.port,
-        'asset_hosts': [canonical_host] if canonical_host else [],
+        'target_host_original': vuln.target_host_original,
+        'asset_host': display_host,
+        'asset_host_resolved': canonical_host if _is_ipv4(canonical_host) else vuln.asset_host_resolved,
+        'asset_port': vuln.asset_port or vuln.port,
+        'asset_hosts': [display_host] if display_host else [],
         'scope': 'target-specific',
     }
 
@@ -97,6 +253,7 @@ def build_aggregate_payload(results: Iterable[ScanResult]) -> dict:
     total_targets = len(result_list)
     raw_total_findings = sum(len(r.vulnerabilities) for r in result_list)
     priority_counter = Counter()
+    severity_counter = Counter()
     category_counter = Counter()
     per_target: list[dict] = []
     aggregated_findings: dict[tuple[str, str, str, str], dict] = {}
@@ -104,6 +261,7 @@ def build_aggregate_payload(results: Iterable[ScanResult]) -> dict:
     for result in result_list:
         for vuln in result.vulnerabilities:
             priority_counter[(vuln.priority or vuln.severity).lower()] += 1
+            severity_counter[(vuln.severity or 'unknown').lower()] += 1
             category_counter[(vuln.category or 'uncategorised').lower()] += 1
             key = _aggregate_key(result.target, vuln, target_asset_hosts)
             if key not in aggregated_findings:
@@ -112,7 +270,7 @@ def build_aggregate_payload(results: Iterable[ScanResult]) -> dict:
             record = aggregated_findings[key]
             if result.target not in record['targets']:
                 record['targets'].append(result.target)
-            host = _canonical_asset_host(result.target, vuln, target_asset_hosts)
+            host = _display_asset_host(result.target, vuln, target_asset_hosts)
             if host and host not in record['asset_hosts']:
                 record['asset_hosts'].append(host)
             prior_priority = record.get('priority')
@@ -120,12 +278,28 @@ def build_aggregate_payload(results: Iterable[ScanResult]) -> dict:
             record['severity'] = _best_severity(record.get('severity'), vuln.severity)
             candidate_score = _PRIORITY_ORDER.get((vuln.priority or '').lower(), 0)
             record_score = _PRIORITY_ORDER.get((prior_priority or '').lower(), 0)
-            if candidate_score >= record_score:
+            if candidate_score > record_score or not prior_priority:
                 record['verification_status'] = vuln.verification_status
                 record['recommendation'] = vuln.recommendation
-                # Prefer more descriptive titles when merging the same asset view.
-                if len(vuln.title or '') > len(record.get('title') or ''):
-                    record['title'] = vuln.title
+                record['finding_id'] = vuln.finding_id
+                record['correlation_id'] = vuln.correlation_id
+                record['scoring_version'] = vuln.scoring_version
+                record['kind'] = vuln.kind
+                record['finding_role'] = vuln.finding_role
+                record['validated'] = vuln.validated
+                record['validation_basis'] = vuln.validation_basis
+                record['priority_score'] = vuln.priority_score
+                record['priority_reason'] = vuln.priority_reason
+                record['confidence'] = vuln.confidence
+                record['source_count'] = vuln.source_count
+                record['evidence_summary'] = vuln.evidence_summary
+                record['target_host_original'] = vuln.target_host_original
+                record['asset_host'] = _display_asset_host(result.target, vuln, target_asset_hosts)
+                record['asset_host_resolved'] = _canonical_asset_host(result.target, vuln, target_asset_hosts)
+                record['asset_port'] = vuln.asset_port or vuln.port
+            # Prefer more descriptive titles even when the priority is tied.
+            if len(vuln.title or '') > len(record.get('title') or ''):
+                record['title'] = vuln.title
 
         per_target.append({
             'target': result.target,
@@ -142,6 +316,7 @@ def build_aggregate_payload(results: Iterable[ScanResult]) -> dict:
     top_findings = list(aggregated_findings.values())
     for finding in top_findings:
         finding['targets'].sort()
+        finding['asset_hosts'].sort()
         finding['target_count'] = len(finding['targets'])
         finding['target_labels'] = ', '.join(finding['targets'])
         finding['asset_host_count'] = len([host for host in finding.get('asset_hosts', []) if host])
@@ -150,26 +325,47 @@ def build_aggregate_payload(results: Iterable[ScanResult]) -> dict:
         else:
             finding['scope'] = 'target-specific'
 
-    top_findings.sort(
-        key=lambda item: (
-            _PRIORITY_ORDER.get((item.get('priority') or '').lower(), 0),
-            item.get('target_count', 1),
-            item['title'],
-        ),
-        reverse=True,
-    )
+    top_findings.sort(key=_top_finding_sort_key)
 
+    per_target.sort(key=lambda item: item['target'])
     shared_asset_findings = [f for f in top_findings if f.get('scope') == 'shared-host']
     target_specific_findings = [f for f in top_findings if f.get('scope') != 'shared-host']
+    actionable_risk_findings, review_surface_findings, hygiene_findings, network_findings, discovery_findings = _split_aggregate_findings(target_specific_findings)
     return {
+        'schema_version': '1.0',
+        'scoring_version': max({v.scoring_version for result in result_list for v in result.vulnerabilities if v.scoring_version} or {'1.0'}),
+        'finding_contract': Vulnerability.contract_metadata(),
+        'summary': {
+            'total_targets': total_targets,
+            'raw_total_findings': raw_total_findings,
+            'total_findings': len(top_findings),
+            'average_priority_score': round(sum(int(item.get('priority_score') or 0) for item in top_findings) / len(top_findings), 1) if top_findings else None,
+            'validated_findings': sum(1 for item in top_findings if bool(item.get('validated')) or _finding_role_record(item) == 'validated'),
+            'candidate_findings': sum(1 for item in top_findings if _finding_role_record(item) == 'candidate'),
+            'actionable_risk_findings': len(actionable_risk_findings),
+            'review_surface_findings': len(review_surface_findings),
+            'hygiene_findings': len(hygiene_findings),
+            'discovery_findings': len(discovery_findings),
+            'priority_counts': _stable_counts(priority_counter, PRIORITY_LABELS),
+            'severity_counts': _stable_counts(severity_counter, SEVERITY_LABELS),
+            'category_counts': dict(sorted(category_counter.items(), key=lambda item: (-item[1], item[0]))),
+        },
         'total_targets': total_targets,
         'raw_total_findings': raw_total_findings,
         'total_findings': len(top_findings),
-        'priority_counts': dict(priority_counter),
-        'category_counts': dict(category_counter),
+        'average_priority_score': round(sum(int(item.get('priority_score') or 0) for item in top_findings) / len(top_findings), 1) if top_findings else None,
+        'validated_findings': sum(1 for item in top_findings if bool(item.get('validated')) or _finding_role_record(item) == 'validated'),
+        'candidate_findings': sum(1 for item in top_findings if _finding_role_record(item) == 'candidate'),
+        'priority_counts': _stable_counts(priority_counter, PRIORITY_LABELS),
+        'severity_counts': _stable_counts(severity_counter, SEVERITY_LABELS),
+        'category_counts': dict(sorted(category_counter.items(), key=lambda item: (-item[1], item[0]))),
         'per_target': per_target,
         'shared_asset_findings': shared_asset_findings[:50],
         'target_specific_findings': target_specific_findings[:50],
+        'top_risk_findings': actionable_risk_findings[:25],
+        'top_review_findings': review_surface_findings[:25],
+        'top_hygiene_findings': hygiene_findings[:25],
+        'top_discovery_findings': discovery_findings[:25],
         'top_findings': top_findings[:50],
         'target_asset_hosts': target_asset_hosts,
     }
@@ -185,6 +381,11 @@ def write_aggregate_reports(results: Iterable[ScanResult], output_dir: str) -> d
     summary_json.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding='utf-8')
 
     md = output / 'aggregate_report.md'
+    vuln_findings = payload['top_risk_findings']
+    review_surface_findings = payload['top_review_findings']
+    hygiene_findings = payload['top_hygiene_findings']
+    network_findings = [f for f in payload['target_specific_findings'] if f.get('category') in NETWORK_DISCOVERY_CATEGORIES]
+    discovery_findings = payload['top_discovery_findings']
     lines = [
         '# Informe agregado de batch scan',
         '',
@@ -200,15 +401,26 @@ def write_aggregate_reports(results: Iterable[ScanResult], output_dir: str) -> d
     for item in payload['per_target']:
         lines.append(f"- **{item['target']}**: {item['findings']} hallazgos, prioridades {item['priorities']}")
 
-    vuln_findings = [f for f in payload['target_specific_findings'] if f.get('category') not in NETWORK_DISCOVERY_CATEGORIES and f.get('category') != 'discovery']
-    network_findings = [f for f in payload['target_specific_findings'] if f.get('category') in NETWORK_DISCOVERY_CATEGORIES]
-    discovery_findings = [f for f in payload['target_specific_findings'] if f.get('category') == 'discovery']
     shared_assets = [f for f in payload['shared_asset_findings'] if f.get('category') in NETWORK_DISCOVERY_CATEGORIES]
 
     lines += ['', '## Vulnerabilidades y misconfiguraciones más relevantes', '']
     if not vuln_findings:
         lines.append('- No se detectaron vulnerabilidades o misconfiguraciones relevantes en el agregado.')
     for finding in vuln_findings:
+        suffix = f" | targets: {finding['target_labels']}" if finding.get('target_labels') else ''
+        lines.append(f"- **{finding['priority'] or finding['severity']}** | `{finding['location']}` | {finding['title']} ({finding['category']}){suffix}")
+
+    lines += ['', '## Superficie pública a revisar', '']
+    if not review_surface_findings:
+        lines.append('- No se detectó superficie pública relevante pendiente de revisión manual en el agregado.')
+    for finding in review_surface_findings:
+        suffix = f" | targets: {finding['target_labels']}" if finding.get('target_labels') else ''
+        lines.append(f"- **{finding['priority'] or finding['severity']}** | `{finding['location']}` | {finding['title']} ({finding['category']}){suffix}")
+
+    lines += ['', '## Higiene y endurecimiento', '']
+    if not hygiene_findings:
+        lines.append('- No se detectaron hallazgos adicionales de higiene o endurecimiento en el agregado.')
+    for finding in hygiene_findings:
         suffix = f" | targets: {finding['target_labels']}" if finding.get('target_labels') else ''
         lines.append(f"- **{finding['priority'] or finding['severity']}** | `{finding['location']}` | {finding['title']} ({finding['category']}){suffix}")
 
@@ -239,19 +451,30 @@ def write_aggregate_reports(results: Iterable[ScanResult], output_dir: str) -> d
     csv_path = output / 'aggregate_findings.csv'
     with csv_path.open('w', encoding='utf-8', newline='') as handle:
         writer = csv.writer(handle)
-        writer.writerow(['scope', 'targets', 'target_count', 'location', 'asset_host', 'asset_port', 'title', 'priority', 'severity', 'category', 'verification_status', 'recommendation'])
+        writer.writerow(['scope', 'targets', 'target_count', 'location', 'target_host_original', 'asset_host', 'asset_host_resolved', 'asset_port', 'finding_id', 'correlation_id', 'title', 'priority', 'priority_score', 'scoring_version', 'priority_reason', 'severity', 'category', 'kind', 'finding_role', 'validated', 'validation_basis', 'verification_status', 'recommendation'])
         for finding in payload['top_findings']:
             writer.writerow([
                 finding.get('scope', ''),
                 finding.get('target_labels', ''),
                 finding.get('target_count', 1),
                 finding.get('location', ''),
+                finding.get('target_host_original', ''),
                 finding.get('asset_host', ''),
+                finding.get('asset_host_resolved', ''),
                 finding.get('asset_port', ''),
+                finding.get('finding_id', ''),
+                finding.get('correlation_id', ''),
                 finding['title'],
                 finding['priority'],
+                finding.get('priority_score', ''),
+                finding.get('scoring_version', ''),
+                finding.get('priority_reason', ''),
                 finding['severity'],
                 finding['category'],
+                finding.get('kind', ''),
+                finding.get('finding_role', ''),
+                str(bool(finding.get('validated'))).lower(),
+                finding.get('validation_basis', ''),
                 finding.get('verification_status', ''),
                 finding['recommendation'],
             ])

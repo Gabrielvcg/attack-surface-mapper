@@ -9,14 +9,183 @@ from pathlib import Path
 from statistics import mean
 from typing import Iterable
 
-from attack_surface_mapper.models.vulnerability import Vulnerability
+from attack_surface_mapper.models.vulnerability import FINDING_SCHEMA_VERSION, Vulnerability
+from attack_surface_mapper.reporting.review_matrix import review_bucket_for_finding
 
 SEVERITY_LABELS = ['critical', 'high', 'medium', 'low', 'info', 'unknown']
 PRIORITY_LABELS = ['critical', 'high', 'medium', 'low']
+COMPARISON_KEYS = ('new_findings', 'resolved_findings', 'changed_findings')
+OPTIONAL_COMPARISON_KEYS = ('promoted_findings', 'regressed_findings', 'updated_findings')
+VERIFICATION_ORDER = {'confirmed': 0, 'likely': 1, 'needs_manual_validation': 2, 'heuristic': 3, 'discarded': 4}
+CONFIDENCE_ORDER = {'high': 0, 'medium': 1, 'low': 2}
+CATEGORY_ORDER = {
+    'authentication': 0,
+    'api': 1,
+    'panel-exposure': 2,
+    'sensitive-file': 3,
+    'secret': 4,
+    'tls': 5,
+    'headers': 6,
+    'discovery': 7,
+}
 
 
 
 NETWORK_DISCOVERY_CATEGORIES = {'network-service', 'database', 'remote-access', 'message-broker', 'admin-surface', 'web-service', 'file-transfer', 'search-service'}
+
+
+def _stable_counts(counter: Counter, labels: list[str]) -> dict[str, int]:
+    return {label: int(counter.get(label, 0)) for label in labels}
+
+
+def _nonzero_count_items(counts: dict[str, int]) -> list[tuple[str, int]]:
+    return [(name, count) for name, count in counts.items() if count > 0]
+
+
+def _normalise_comparison(comparison: dict | None) -> dict[str, list[dict]]:
+    payload = comparison or {}
+    normalised = dict(payload)
+    for key in COMPARISON_KEYS + OPTIONAL_COMPARISON_KEYS:
+        normalised[key] = list(payload.get(key, []) or [])
+    summary = dict(payload.get('summary') or {})
+    summary.setdefault('new_findings', len(normalised['new_findings']))
+    summary.setdefault('resolved_findings', len(normalised['resolved_findings']))
+    summary.setdefault('changed_findings', len(normalised['changed_findings']))
+    summary.setdefault('promoted_findings', len(normalised['promoted_findings']))
+    summary.setdefault('regressed_findings', len(normalised['regressed_findings']))
+    summary.setdefault('updated_findings', len(normalised['updated_findings']))
+    summary.setdefault('unchanged_findings', 0)
+    summary.setdefault('change_type_counts', {})
+    normalised['summary'] = summary
+    normalised.setdefault('schema_version', '1.0')
+    return normalised
+
+
+def _finding_role(vulnerability: Vulnerability) -> str:
+    explicit_role = (vulnerability.finding_role or '').lower()
+    if explicit_role:
+        return explicit_role
+    title = (vulnerability.title or '').lower()
+    category = (vulnerability.category or '').lower()
+    kind = (vulnerability.kind or '').lower()
+    verification = (vulnerability.verification_status or '').lower()
+    if (
+        kind == 'discovery'
+        or category == 'discovery'
+        or title.startswith('multiple api endpoints exposed')
+        or title.startswith('protected api surface discovered')
+        or title.startswith('multiple client-side api references observed')
+        or title == 'client-side api reference observed'
+        or title.startswith('technology fingerprint detected')
+    ):
+        return 'discovery'
+    if bool(vulnerability.validated) or verification == 'confirmed':
+        return 'validated'
+    if kind == 'validation' or verification in {'likely', 'needs_manual_validation', 'heuristic'}:
+        return 'candidate'
+    return ''
+
+
+def _is_inventory_like(vulnerability: Vulnerability) -> bool:
+    title = (vulnerability.title or '').lower()
+    category = (vulnerability.category or '').lower()
+    finding_role = _finding_role(vulnerability)
+    return (
+        finding_role == 'discovery'
+        or category == 'discovery'
+        or title.startswith('multiple api endpoints exposed')
+        or title.startswith('protected api surface discovered')
+        or title.startswith('multiple client-side api references observed')
+        or title == 'client-side api reference observed'
+        or title.startswith('technology fingerprint detected')
+    )
+
+
+def _sort_bucket(vulnerability: Vulnerability) -> int:
+    if _is_inventory_like(vulnerability):
+        return 3
+    if (vulnerability.category or '').lower() == 'headers':
+        return 2
+    if _finding_role(vulnerability) == 'validated' or bool(vulnerability.validated):
+        return 0
+    return 1
+
+
+def _report_sort_key(vulnerability: Vulnerability) -> tuple:
+    priority_order = {'critical': 0, 'high': 1, 'medium': 2, 'low': 3, None: 4}
+    severity_order = {'critical': 0, 'high': 1, 'medium': 2, 'low': 3, 'info': 4, 'unknown': 5, None: 6}
+    return (
+        priority_order.get(vulnerability.priority, 4),
+        -(vulnerability.priority_score or 0),
+        _sort_bucket(vulnerability),
+        VERIFICATION_ORDER.get((vulnerability.verification_status or '').lower(), 5),
+        CATEGORY_ORDER.get((vulnerability.category or '').lower(), 98),
+        severity_order.get(vulnerability.severity, 6),
+        CONFIDENCE_ORDER.get((vulnerability.confidence or '').lower(), 3),
+        -(vulnerability.source_count or 1),
+        (vulnerability.category or ''),
+        vulnerability.title,
+        vulnerability.target,
+    )
+
+
+def _is_hygiene_finding(vulnerability: Vulnerability) -> bool:
+    category = (vulnerability.category or '').lower()
+    return category in {'headers', 'tls'}
+
+
+def _is_application_finding(vulnerability: Vulnerability) -> bool:
+    category = (vulnerability.category or '').lower()
+    return category not in NETWORK_DISCOVERY_CATEGORIES | {'discovery'} and not _is_hygiene_finding(vulnerability)
+
+
+def _is_review_surface(vulnerability: Vulnerability) -> bool:
+    if not _is_application_finding(vulnerability):
+        return False
+    return review_bucket_for_finding(vulnerability.to_summary_record()) == 'revisar'
+
+
+def _is_discovery_like_surface(vulnerability: Vulnerability) -> bool:
+    if not _is_application_finding(vulnerability):
+        return False
+    return review_bucket_for_finding(vulnerability.to_summary_record()) == 'descubrimiento'
+
+
+def _split_report_groups(vulnerabilities: Iterable[Vulnerability]) -> tuple[list[Vulnerability], list[Vulnerability], list[Vulnerability], list[Vulnerability], list[Vulnerability]]:
+    sorted_vulns = list(vulnerabilities)
+    application = [v for v in sorted_vulns if _is_application_finding(v) and not _is_review_surface(v) and not _is_discovery_like_surface(v)]
+    review_surface = [v for v in sorted_vulns if _is_review_surface(v)]
+    hygiene = [v for v in sorted_vulns if _is_hygiene_finding(v)]
+    network = [v for v in sorted_vulns if (v.category or '').lower() in NETWORK_DISCOVERY_CATEGORIES]
+    discovery = [v for v in sorted_vulns if (v.category or '').lower() == 'discovery' or _is_discovery_like_surface(v)]
+    return application, review_surface, hygiene, network, discovery
+
+
+def _headline_risk_findings(vulnerabilities: Iterable[Vulnerability]) -> list[Vulnerability]:
+    items = list(vulnerabilities)
+    prioritised = [
+        vuln
+        for vuln in items
+        if review_bucket_for_finding({
+            'title': vuln.title,
+            'kind': vuln.kind,
+            'finding_role': vuln.finding_role,
+            'validated': vuln.validated,
+            'category': vuln.category,
+            'verification_status': vuln.verification_status,
+            'confidence': vuln.confidence,
+            'priority': vuln.priority,
+        }) == 'priorizar'
+    ]
+    if prioritised:
+        return prioritised
+    preferred = [
+        vuln
+        for vuln in items
+        if (vuln.priority or '').lower() in {'critical', 'high', 'medium'}
+        or _finding_role(vuln) == 'validated'
+    ]
+    return preferred or items
 
 @dataclass(slots=True)
 class ReportPaths:
@@ -37,7 +206,15 @@ class ReportStats:
     average_cvss: float | None
     unique_cves: list[str]
     unique_cwes: list[str]
+    average_priority_score: float | None
     needs_manual_validation: int
+    confirmed_high_or_critical: int
+    validated_findings: int
+    candidate_findings: int
+    application_findings: int
+    review_surface_findings: int
+    hygiene_findings: int
+    discovery_findings: int
 
 
 class ReportGenerator:
@@ -46,22 +223,12 @@ class ReportGenerator:
 
     @staticmethod
     def sort_vulnerabilities(vulnerabilities: Iterable[Vulnerability]) -> list[Vulnerability]:
-        priority_order = {'critical': 0, 'high': 1, 'medium': 2, 'low': 3, None: 4}
-        severity_order = {'critical': 0, 'high': 1, 'medium': 2, 'low': 3, 'info': 4, 'unknown': 5, None: 6}
-        return sorted(
-            vulnerabilities,
-            key=lambda v: (
-                priority_order.get(v.priority, 4),
-                severity_order.get(v.severity, 6),
-                (v.category or ''),
-                v.title,
-                v.target,
-            ),
-        )
+        return sorted(vulnerabilities, key=_report_sort_key)
 
     @staticmethod
     def compute_stats(vulnerabilities: Iterable[Vulnerability]) -> ReportStats:
         vulns = list(vulnerabilities)
+        application_findings, review_surface_findings, hygiene_findings, _, discovery_findings = _split_report_groups(vulns)
         severity_counter = Counter((v.severity or 'unknown').lower() for v in vulns)
         priority_counter = Counter((v.priority or 'low').lower() for v in vulns)
         category_counter = Counter(v.category or 'uncategorised' for v in vulns)
@@ -71,31 +238,53 @@ class ReportGenerator:
         unique_cwes = sorted({item for v in vulns for item in v.cwe if item})
         return ReportStats(
             total_findings=len(vulns),
-            severity_counts={label: severity_counter[label] for label in SEVERITY_LABELS if severity_counter.get(label, 0) > 0},
-            priority_counts={label: priority_counter[label] for label in PRIORITY_LABELS if priority_counter.get(label, 0) > 0},
+            severity_counts=_stable_counts(severity_counter, SEVERITY_LABELS),
+            priority_counts=_stable_counts(priority_counter, PRIORITY_LABELS),
             category_counts=dict(sorted(category_counter.items(), key=lambda item: (-item[1], item[0]))),
             source_counts=dict(sorted(source_counter.items(), key=lambda item: (-item[1], item[0]))),
             average_cvss=round(mean(cvss_values), 2) if cvss_values else None,
+            average_priority_score=round(mean([v.priority_score for v in vulns if v.priority_score is not None]), 1) if any(v.priority_score is not None for v in vulns) else None,
             unique_cves=unique_cves,
             unique_cwes=unique_cwes,
             needs_manual_validation=sum(
                 1
                 for v in vulns
-                if v.needs_manual_validation or (v.verification_status or '').lower() in {'likely', 'needs_manual_validation'}
+                if v.needs_manual_validation or (v.verification_status or '').lower() == 'needs_manual_validation'
             ),
+            confirmed_high_or_critical=sum(
+                1
+                for v in vulns
+                if _finding_role(v) == 'validated'
+                and (v.priority or v.severity or '').lower() in {'critical', 'high'}
+            ),
+            validated_findings=sum(1 for v in vulns if _finding_role(v) == 'validated' or bool(v.validated)),
+            candidate_findings=sum(1 for v in vulns if _finding_role(v) == 'candidate'),
+            application_findings=len(application_findings),
+            review_surface_findings=len(review_surface_findings),
+            hygiene_findings=len(hygiene_findings),
+            discovery_findings=len(discovery_findings),
         )
 
     @staticmethod
     def executive_summary(stats: ReportStats) -> str:
         if stats.total_findings == 0:
             return 'No se detectaron hallazgos durante la ejecución actual.'
-        priorities = ', '.join(f'{count} {name}' for name, count in stats.priority_counts.items())
-        severities = ', '.join(f'{count} {name}' for name, count in stats.severity_counts.items())
+        priorities = ', '.join(f'{count} {name}' for name, count in _nonzero_count_items(stats.priority_counts)) or 'sin prioridades clasificadas'
+        severities = ', '.join(f'{count} {name}' for name, count in _nonzero_count_items(stats.severity_counts)) or 'sin severidades clasificadas'
+        high_or_critical = stats.priority_counts.get('critical', 0) + stats.priority_counts.get('high', 0)
+        if stats.confirmed_high_or_critical:
+            impact_note = f'Se observaron {stats.confirmed_high_or_critical} hallazgos confirmados de prioridad alta o crítica.'
+        elif high_or_critical:
+            impact_note = 'No se observaron hallazgos confirmados de prioridad alta o crítica; los hallazgos de mayor prioridad requieren revisión manual.'
+        else:
+            impact_note = 'No se observaron hallazgos de prioridad alta o crítica en esta ejecución.'
         return (
             f'Se identificaron {stats.total_findings} hallazgos correlacionados. '
+            f'Estado de validación: {stats.validated_findings} validados, {stats.candidate_findings} candidatos, {stats.discovery_findings} de descubrimiento/contexto. '
+            f'Riesgo accionable: {stats.application_findings}; superficie a revisar: {stats.review_surface_findings}; higiene/endurecimiento: {stats.hygiene_findings}; descubrimiento: {stats.discovery_findings}. '
             f'Prioridades: {priorities}. Severidades: {severities}. '
             f'Hallazgos que requieren validación manual: {stats.needs_manual_validation}. '
-            'No se observaron vulnerabilidades críticas confirmadas en esta ejecución, pero la superficie expuesta descubierta requiere revisión.'
+            f'{impact_note}'
         )
 
     @staticmethod
@@ -105,27 +294,38 @@ class ReportGenerator:
         file_path.write_text(content, encoding='utf-8')
         return str(file_path)
 
+    @staticmethod
+    def _serialize_top_finding(vulnerability: Vulnerability) -> dict:
+        return vulnerability.to_summary_record()
+
     def build_summary_payload(self, vulnerabilities: Iterable[Vulnerability], target: str, comparison: dict | None = None) -> dict:
         sorted_vulns = self.sort_vulnerabilities(vulnerabilities)
         stats = self.compute_stats(sorted_vulns)
+        application_findings, review_surface_findings, hygiene_findings, _, discovery_findings = _split_report_groups(sorted_vulns)
+        headline_risk_findings = _headline_risk_findings(application_findings)
+        if not headline_risk_findings:
+            headline_risk_findings = _headline_risk_findings(review_surface_findings)
+        comparison_payload = _normalise_comparison(comparison)
         return {
+            'schema_version': FINDING_SCHEMA_VERSION,
+            'scoring_version': max({v.scoring_version for v in sorted_vulns if v.scoring_version} or {FINDING_SCHEMA_VERSION}),
+            'finding_contract': Vulnerability.contract_metadata(),
             'title': self.title,
             'target': target,
             'executive_summary': self.executive_summary(stats),
             'stats': asdict(stats),
-            'comparison': comparison or {},
-            'top_findings': [
-                {
-                    'title': v.title,
-                    'target': v.target,
-                    'priority': v.priority,
-                    'severity': v.severity,
-                    'category': v.category,
-                    'verification_status': v.verification_status,
-                    'recommendation': v.recommendation,
-                }
-                for v in sorted_vulns[:10]
-            ],
+            'comparison': comparison_payload,
+            'comparison_summary': dict(comparison_payload.get('summary') or {}),
+            'top_finding_count': min(len(sorted_vulns), 10),
+            'top_findings': [self._serialize_top_finding(v) for v in sorted_vulns[:10]],
+            'top_risk_finding_count': min(len(headline_risk_findings), 5),
+            'top_risk_findings': [self._serialize_top_finding(v) for v in headline_risk_findings[:5]],
+            'top_review_finding_count': min(len(review_surface_findings), 5),
+            'top_review_findings': [self._serialize_top_finding(v) for v in review_surface_findings[:5]],
+            'top_hygiene_finding_count': min(len(hygiene_findings), 5),
+            'top_hygiene_findings': [self._serialize_top_finding(v) for v in hygiene_findings[:5]],
+            'top_discovery_finding_count': min(len(discovery_findings), 5),
+            'top_discovery_findings': [self._serialize_top_finding(v) for v in discovery_findings[:5]],
         }
 
     def generate_summary_json(self, vulnerabilities: Iterable[Vulnerability], target: str, output_path: str, comparison: dict | None = None) -> str:
@@ -133,7 +333,7 @@ class ReportGenerator:
         return self._write(output_path, json.dumps(payload, indent=2, ensure_ascii=False))
 
     def generate_comparison_json(self, comparison: dict, output_path: str) -> str:
-        return self._write(output_path, json.dumps(comparison, indent=2, ensure_ascii=False))
+        return self._write(output_path, json.dumps(_normalise_comparison(comparison), indent=2, ensure_ascii=False))
 
     def generate_csv(self, vulnerabilities: Iterable[Vulnerability], output_path: str) -> str:
         file_path = Path(output_path)
@@ -142,13 +342,13 @@ class ReportGenerator:
         with file_path.open('w', encoding='utf-8', newline='') as handle:
             writer = csv.writer(handle)
             writer.writerow([
-                'source', 'severity', 'priority', 'priority_reason', 'category', 'confidence', 'verification_status', 'title', 'target', 'description',
+                'finding_id', 'correlation_id', 'source', 'severity', 'priority', 'priority_score', 'scoring_version', 'priority_reason', 'category', 'kind', 'finding_role', 'validated', 'validation_basis', 'confidence', 'verification_status', 'title', 'target', 'target_host_original', 'asset_host', 'asset_host_resolved', 'asset_port', 'description',
                 'evidence_summary', 'cve', 'cwe', 'cvss_score', 'source_count', 'related_sources', 'recommendation'
             ])
             for vuln in sorted_vulns:
                 writer.writerow([
-                    vuln.source, vuln.severity, vuln.priority or '', vuln.priority_reason or '', vuln.category or '', vuln.confidence or '', vuln.verification_status or '',
-                    vuln.title, vuln.target, vuln.description, vuln.evidence_summary or '',
+                    vuln.finding_id or '', vuln.correlation_id or '', vuln.source, vuln.severity, vuln.priority or '', vuln.priority_score if vuln.priority_score is not None else '', vuln.scoring_version or '', vuln.priority_reason or '', vuln.category or '', vuln.kind or '', vuln.finding_role or '', str(bool(vuln.validated)).lower(), vuln.validation_basis or '', vuln.confidence or '', vuln.verification_status or '',
+                    vuln.title, vuln.target, vuln.target_host_original or '', vuln.asset_host or '', vuln.asset_host_resolved or '', vuln.asset_port or '', vuln.description, vuln.evidence_summary or '',
                     ', '.join(vuln.cve), ', '.join(vuln.cwe), vuln.cvss_score if vuln.cvss_score is not None else '',
                     vuln.source_count, ', '.join(vuln.related_sources), vuln.recommendation or ''
                 ])
@@ -159,7 +359,11 @@ class ReportGenerator:
             f'### [{label}] {vuln.title}',
             '',
             f'- **Prioridad:** {vuln.priority or "N/A"}',
+            f'- **Score de prioridad:** {vuln.priority_score if vuln.priority_score is not None else "N/A"}',
             f'- **Motivo de prioridad:** {vuln.priority_reason or "N/A"}',
+            f'- **Rol del hallazgo:** {vuln.finding_role or "N/A"}',
+            f'- **Validado:** {"sí" if vuln.validated else "no"}',
+            f'- **Base de validación:** {vuln.validation_basis or "N/A"}',
             f'- **Severidad:** {vuln.severity}',
             f'- **Categoría:** {vuln.category or "N/A"}',
             f'- **Confianza:** {vuln.confidence or "N/A"}',
@@ -184,11 +388,14 @@ class ReportGenerator:
     def generate_markdown(self, vulnerabilities: Iterable[Vulnerability], target: str, output_path: str, comparison: dict | None = None) -> str:
         sorted_vulns = self.sort_vulnerabilities(vulnerabilities)
         stats = self.compute_stats(sorted_vulns)
-        network_services = [v for v in sorted_vulns if (v.category or '').lower() in NETWORK_DISCOVERY_CATEGORIES]
-        discovery_like = [v for v in sorted_vulns if (v.category or '').lower() == 'discovery']
-        vulnerability_like = [v for v in sorted_vulns if (v.category or '').lower() not in NETWORK_DISCOVERY_CATEGORIES | {'discovery'}]
-        confirmed = [v for v in vulnerability_like if (v.verification_status or '').lower() == 'confirmed']
-        plausible = [v for v in vulnerability_like if (v.verification_status or '').lower() != 'confirmed']
+        comparison_payload = _normalise_comparison(comparison) if comparison else {}
+        application_findings, review_surface_findings, hygiene_findings, network_services, discovery_like = _split_report_groups(sorted_vulns)
+        confirmed = [v for v in application_findings if _finding_role(v) == 'validated']
+        plausible = [v for v in application_findings if _finding_role(v) != 'validated']
+        review_confirmed = [v for v in review_surface_findings if _finding_role(v) == 'validated']
+        review_plausible = [v for v in review_surface_findings if _finding_role(v) != 'validated']
+        hygiene_confirmed = [v for v in hygiene_findings if _finding_role(v) == 'validated']
+        hygiene_plausible = [v for v in hygiene_findings if _finding_role(v) != 'validated']
 
         lines = [
             f'# {self.title}',
@@ -200,19 +407,22 @@ class ReportGenerator:
             '## Prioridades',
             '',
         ]
-        for name, count in stats.priority_counts.items():
+        for name, count in _nonzero_count_items(stats.priority_counts):
             lines.append(f'- **{name}**: {count}')
         lines += ['', '## Severidades', '']
-        for name, count in stats.severity_counts.items():
+        for name, count in _nonzero_count_items(stats.severity_counts):
             lines.append(f'- **{name}**: {count}')
         lines += ['', '## Categorías', '']
         for name, count in stats.category_counts.items():
             lines.append(f'- **{name}**: {count}')
-        if comparison:
+        if comparison_payload:
             lines += ['', '## Comparación con baseline', '']
-            lines.append(f"- **Nuevos hallazgos:** {len(comparison.get('new_findings', []))}")
-            lines.append(f"- **Hallazgos resueltos:** {len(comparison.get('resolved_findings', []))}")
-            lines.append(f"- **Hallazgos modificados:** {len(comparison.get('changed_findings', []))}")
+            summary = comparison_payload.get('summary', {})
+            lines.append(f"- **Nuevos hallazgos:** {summary.get('new_findings', len(comparison_payload.get('new_findings', [])))}")
+            lines.append(f"- **Hallazgos resueltos:** {summary.get('resolved_findings', len(comparison_payload.get('resolved_findings', [])))}")
+            lines.append(f"- **Hallazgos modificados:** {summary.get('changed_findings', len(comparison_payload.get('changed_findings', [])))}")
+            lines.append(f"- **Promovidos en riesgo/confianza:** {summary.get('promoted_findings', len(comparison_payload.get('promoted_findings', [])))}")
+            lines.append(f"- **Regresados o debilitados:** {summary.get('regressed_findings', len(comparison_payload.get('regressed_findings', [])))}")
 
         lines += ['', '## Hallazgos confirmados de aplicación', '']
         if not confirmed:
@@ -225,6 +435,22 @@ class ReportGenerator:
             lines.append('No se detectaron hallazgos plausibles adicionales de aplicación.')
         for idx, vuln in enumerate(plausible, 1):
             self._append_markdown_finding(lines, vuln, f'P{idx}')
+
+        lines += ['', '## Superficie pública a revisar', '']
+        if not review_surface_findings:
+            lines.append('No se detectó superficie pública relevante pendiente de revisión manual.')
+        for idx, vuln in enumerate(review_confirmed, 1):
+            self._append_markdown_finding(lines, vuln, f'R{idx}')
+        for idx, vuln in enumerate(review_plausible, 1):
+            self._append_markdown_finding(lines, vuln, f'RP{idx}')
+
+        lines += ['', '## Hallazgos de higiene y endurecimiento', '']
+        if not hygiene_findings:
+            lines.append('No se detectaron hallazgos adicionales de higiene o endurecimiento.')
+        for idx, vuln in enumerate(hygiene_confirmed, 1):
+            self._append_markdown_finding(lines, vuln, f'H{idx}')
+        for idx, vuln in enumerate(hygiene_plausible, 1):
+            self._append_markdown_finding(lines, vuln, f'HP{idx}')
 
         lines += ['', '## Servicios y puertos descubiertos', '']
         if not network_services:
@@ -243,11 +469,13 @@ class ReportGenerator:
     def generate_html(self, vulnerabilities: Iterable[Vulnerability], target: str, output_path: str, comparison: dict | None = None) -> str:
         sorted_vulns = self.sort_vulnerabilities(vulnerabilities)
         stats = self.compute_stats(sorted_vulns)
+        comparison_payload = _normalise_comparison(comparison) if comparison else {}
         findings = []
         for vuln in sorted_vulns:
             findings.append(
                 f"<section class='finding'><h3>{html.escape(vuln.title)}</h3>"
                 f"<p><strong>Prioridad:</strong> {html.escape(vuln.priority or 'N/A')} | <strong>Severidad:</strong> {html.escape(vuln.severity)}</p>"
+                f"<p><strong>Score de prioridad:</strong> {html.escape(str(vuln.priority_score) if vuln.priority_score is not None else 'N/A')} | <strong>Versión de scoring:</strong> {html.escape(vuln.scoring_version or 'N/A')}</p>"
                 f"<p><strong>Motivo de prioridad:</strong> {html.escape(vuln.priority_reason or 'N/A')}</p>"
                 f"<p><strong>Categoría:</strong> {html.escape(vuln.category or 'N/A')} | <strong>Confianza:</strong> {html.escape(vuln.confidence or 'N/A')} | <strong>Verificación:</strong> {html.escape(vuln.verification_status or 'N/A')}</p>"
                 f"<p><strong>Target:</strong> <code>{html.escape(vuln.target)}</code></p>"
@@ -256,12 +484,14 @@ class ReportGenerator:
                 f"<p><strong>Recomendación:</strong> {html.escape(vuln.recommendation or '')}</p></section>"
             )
         comparison_html = ''
-        if comparison:
+        if comparison_payload:
             comparison_html = (
                 f"<section><h2>Comparación con baseline</h2><ul>"
-                f"<li>Nuevos hallazgos: {len(comparison.get('new_findings', []))}</li>"
-                f"<li>Hallazgos resueltos: {len(comparison.get('resolved_findings', []))}</li>"
-                f"<li>Hallazgos modificados: {len(comparison.get('changed_findings', []))}</li>"
+                f"<li>Nuevos hallazgos: {comparison_payload.get('summary', {}).get('new_findings', len(comparison_payload.get('new_findings', [])))}</li>"
+                f"<li>Hallazgos resueltos: {comparison_payload.get('summary', {}).get('resolved_findings', len(comparison_payload.get('resolved_findings', [])))}</li>"
+                f"<li>Hallazgos modificados: {comparison_payload.get('summary', {}).get('changed_findings', len(comparison_payload.get('changed_findings', [])))}</li>"
+                f"<li>Promovidos en riesgo/confianza: {comparison_payload.get('summary', {}).get('promoted_findings', len(comparison_payload.get('promoted_findings', [])))}</li>"
+                f"<li>Regresados o debilitados: {comparison_payload.get('summary', {}).get('regressed_findings', len(comparison_payload.get('regressed_findings', [])))}</li>"
                 f"</ul></section>"
             )
         content = f"""<!doctype html>
@@ -280,7 +510,7 @@ code {{ background: #f4f4f4; padding: 0.1rem 0.3rem; }}
 <p><strong>Target:</strong> <code>{html.escape(target)}</code></p>
 <p>{html.escape(self.executive_summary(stats))}</p>
 <section><h2>Resumen</h2>
-<ul>{''.join(f'<li>{html.escape(k)}: {v}</li>' for k, v in stats.priority_counts.items())}</ul>
+<ul>{''.join(f'<li>{html.escape(k)}: {v}</li>' for k, v in _nonzero_count_items(stats.priority_counts))}</ul>
 </section>
 {comparison_html}
 <section><h2>Hallazgos</h2>{''.join(findings) if findings else '<p>Sin hallazgos.</p>'}</section>

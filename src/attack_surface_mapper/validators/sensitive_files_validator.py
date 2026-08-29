@@ -9,6 +9,10 @@ from attack_surface_mapper.validators.base import BaseValidator
 from attack_surface_mapper.validators.http_fingerprint import baseline_fingerprint, looks_like_baseline, normalise_text
 
 
+def _looks_like_html_document(preview: str, content_type: str) -> bool:
+    return '<html' in preview or '</html' in preview or ('text/html' in content_type and '<body' in preview)
+
+
 class SensitiveFilesValidator(BaseValidator):
     DEFAULT_PATHS: tuple[str, ...] = (
         '/.git/HEAD',
@@ -23,7 +27,7 @@ class SensitiveFilesValidator(BaseValidator):
         '/sitemap.xml',
     )
 
-    def __init__(self, timeout: int = 6, paths: tuple[str, ...] | None = None, *, backend: str = 'auto', mode: str = 'passive', user_agent: str = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36', use_baseline_probe: bool = True) -> None:
+    def __init__(self, timeout: int = 6, paths: tuple[str, ...] | None = None, *, backend: str = 'requests', mode: str = 'passive', user_agent: str = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36', use_baseline_probe: bool = True) -> None:
         self.timeout = timeout
         self.paths = paths or self.DEFAULT_PATHS
         self.backend = backend
@@ -31,14 +35,14 @@ class SensitiveFilesValidator(BaseValidator):
         self.user_agent = user_agent
         self.use_baseline_probe = use_baseline_probe
 
-    def run(self, target: str) -> list[Vulnerability]:
+    def run(self, target: str, baseline=None) -> list[Vulnerability]:
         findings: list[Vulnerability] = []
         parsed_target = urlparse(target)
         host = parsed_target.hostname
         port = str(parsed_target.port) if parsed_target.port else None
         scheme = parsed_target.scheme
         with build_http_session(backend=self.backend, mode=self.mode, timeout=self.timeout, user_agent=self.user_agent) as session:
-            baseline = baseline_fingerprint(session, target, self.timeout) if self.use_baseline_probe else None
+            baseline = baseline if baseline is not None else (baseline_fingerprint(session, target, self.timeout) if self.use_baseline_probe else None)
             for path in self.paths:
                 url = urljoin(target.rstrip('/') + '/', path.lstrip('/'))
                 try:
@@ -62,7 +66,7 @@ class SensitiveFilesValidator(BaseValidator):
                     evidence=f'GET {response.url} devolvió {response.status_code}; validación={reason}; vista previa={self._preview(preview)}',
                     cwe=['CWE-200'],
                     tags=['file', 'exposure'],
-                    template_id=f'custom-sensitive-file-{path.strip('/') or "root"}',
+                    template_id=f"custom-sensitive-file-{path.strip('/') or 'root'}",
                     matched_at=response.url,
                     host=host,
                     port=port,
@@ -77,6 +81,8 @@ class SensitiveFilesValidator(BaseValidator):
 
     def _classify(self, path: str, response, preview: str) -> tuple[bool, str, str]:
         content_type = (response.headers.get('Content-Type') or '').lower()
+        if path in {'/.git/HEAD', '/.env', '/application.properties', '/application.yml', '/docker-compose.yml', '/db.sql', '/robots.txt', '/sitemap.xml'} and _looks_like_html_document(preview, content_type):
+            return False, 'low', 'respuesta html, no parece un fichero real'
         if path == '/.git/HEAD':
             ok = preview.startswith('ref: refs/')
             return ok, 'high' if ok else 'low', 'git HEAD marker'
@@ -85,9 +91,15 @@ class SensitiveFilesValidator(BaseValidator):
             strong = any(token in preview for token in ('app_key=', 'secret_key=', 'database_url=', 'api_key=', 'token='))
             ok = key_matches >= 2 and strong
             return ok, 'high' if ok else 'low', 'env-like key=value patterns'
-        if path in {'/application.properties', '/application.yml', '/docker-compose.yml'}:
-            ok = any(token in preview for token in ('spring.', 'server:', 'datasource', 'management.', 'services:', 'version:'))
-            return ok, 'medium' if ok else 'low', 'configuration markers'
+        if path == '/application.properties':
+            ok = any(token in preview for token in ('spring.', 'server.port', 'datasource.', 'management.', 'security.', 'password='))
+            return ok, 'medium' if ok else 'low', 'application.properties markers'
+        if path == '/application.yml':
+            ok = any(token in preview for token in ('spring:', 'datasource:', 'management:', 'security:', 'database:', 'password:'))
+            return ok, 'medium' if ok else 'low', 'application.yml markers'
+        if path == '/docker-compose.yml':
+            ok = 'services:' in preview and any(token in preview for token in ('image:', 'build:', 'ports:', 'environment:'))
+            return ok, 'medium' if ok else 'low', 'docker-compose markers'
         if path == '/robots.txt':
             ok = 'disallow:' in preview or 'user-agent:' in preview
             return ok, 'medium' if ok else 'low', 'robots syntax'
@@ -96,15 +108,17 @@ class SensitiveFilesValidator(BaseValidator):
             return ok, 'medium' if ok else 'low', 'xml sitemap markers'
         if path == '/backup.zip':
             raw = response.content[:4]
-            ok = raw.startswith(b'PK\x03\x04') or 'application/zip' in content_type
-            return ok, 'high' if ok else 'low', 'zip signature or content-type'
+            ok = raw.startswith(b'PK\x03\x04')
+            reason = 'zip signature' if ok else f'content-type only ({content_type or "absent"})'
+            return ok, 'high' if ok else 'low', reason
         if path == '/db.sql':
             ok = any(token in preview for token in ('create table', 'insert into', 'sql dump', '-- phpmyadmin'))
             return ok, 'high' if ok else 'low', 'sql dump markers'
         if path == '/.DS_Store':
             raw = response.content[:8]
-            ok = raw.startswith(bytes.fromhex('0000000142756431')) or 'application/octet-stream' in content_type
-            return ok, 'medium' if ok else 'low', 'ds_store markers'
+            ok = raw.startswith(bytes.fromhex('0000000142756431'))
+            reason = 'ds_store signature' if ok else f'content-type only ({content_type or "absent"})'
+            return ok, 'medium' if ok else 'low', reason
         return bool(preview.strip()), 'low', 'generic non-empty response'
 
     @staticmethod

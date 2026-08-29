@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+
 from attack_surface_mapper.models.vulnerability import Vulnerability
 from attack_surface_mapper.utils.asset_normalizer import normalize_asset
 
@@ -20,6 +22,35 @@ PRIORITY_LABELS = {
     5: 'critical',
     6: 'critical',
     7: 'critical',
+}
+
+SCORING_VERSION = '1.0'
+SEVERITY_BASE_SCORE = {
+    'info': 8,
+    'low': 20,
+    'medium': 45,
+    'high': 68,
+    'critical': 85,
+    'unknown': 0,
+}
+CONFIDENCE_ADJUSTMENTS = {
+    'low': -15,
+    'medium': 0,
+    'high': 10,
+}
+ROLE_ADJUSTMENTS = {
+    'discovery': -30,
+    'candidate': -5,
+    'validated': 15,
+}
+VALIDATION_BASIS_ADJUSTMENTS = {
+    'context-only': -10,
+    'discarded-signal': -25,
+    'heuristic-evidence': -5,
+    'template-evidence': 6,
+    'configuration-evidence': 8,
+    'response-evidence': 14,
+    'correlated-evidence': 18,
 }
 
 NETWORK_DISCOVERY_CATEGORIES = {'network-service', 'database', 'remote-access', 'message-broker', 'admin-surface', 'web-service', 'file-transfer', 'search-service'}
@@ -59,11 +90,24 @@ TITLE_RECOMMENDATIONS = {
 
 def infer_kind(vulnerability: Vulnerability) -> str:
     category = (vulnerability.category or '').lower()
-    if category in {'discovery'} or vulnerability.title.startswith('Technology Fingerprint Detected'):
+    if _is_inventory_or_context_finding(vulnerability):
         return 'discovery'
     if category in {'headers', 'tls', 'authentication', 'api', 'panel-exposure', 'web-service', 'network-service', 'secret', 'sensitive-file'}:
         return 'validation'
     return 'other'
+
+
+def _is_inventory_or_context_finding(vulnerability: Vulnerability) -> bool:
+    category = (vulnerability.category or '').lower()
+    title = (vulnerability.title or '').lower()
+    return (
+        category == 'discovery'
+        or title.startswith('technology fingerprint detected')
+        or title.startswith('multiple api endpoints exposed')
+        or title.startswith('protected api surface discovered')
+        or title.startswith('multiple client-side api references observed')
+        or title == 'client-side api reference observed'
+    )
 
 
 def clean_evidence(text: str | None, max_len: int = 280) -> str | None:
@@ -76,13 +120,68 @@ def _base_priority(vulnerability: Vulnerability) -> int:
     return SEVERITY_SCORE.get((vulnerability.severity or 'unknown').lower(), 0)
 
 
-def compute_priority(vulnerability: Vulnerability) -> tuple[str, str]:
+def _priority_label_from_score(score: int) -> str:
+    if score >= 85:
+        return 'critical'
+    if score >= 60:
+        return 'high'
+    if score >= 30:
+        return 'medium'
+    return 'low'
+
+
+def _derive_validation_basis(vulnerability: Vulnerability) -> str:
+    verification = (vulnerability.verification_status or '').lower()
+    category = (vulnerability.category or '').lower()
+    title = (vulnerability.title or '').lower()
+
+    if _is_inventory_or_context_finding(vulnerability):
+        return 'context-only'
+    if verification == 'discarded':
+        return 'discarded-signal'
+    if verification == 'confirmed' and vulnerability.source_count > 1:
+        return 'correlated-evidence'
+    if vulnerability.source == 'nuclei':
+        return 'template-evidence'
+    if category in {'headers', 'tls'} or title.startswith('cookie without '):
+        return 'configuration-evidence'
+    if verification == 'confirmed':
+        return 'response-evidence'
+    return 'heuristic-evidence'
+
+
+def _apply_validation_model(vulnerability: Vulnerability) -> None:
+    kind = vulnerability.kind or infer_kind(vulnerability)
+    verification = (vulnerability.verification_status or '').lower()
+
+    vulnerability.kind = kind
+    vulnerability.validation_basis = _derive_validation_basis(vulnerability)
+
+    if kind == 'discovery' or _is_inventory_or_context_finding(vulnerability):
+        vulnerability.finding_role = 'discovery'
+        vulnerability.validated = False
+        vulnerability.needs_manual_validation = False
+        return
+
+    if verification == 'confirmed':
+        vulnerability.finding_role = 'validated'
+        vulnerability.validated = True
+        vulnerability.needs_manual_validation = False
+        return
+
+    vulnerability.finding_role = 'candidate'
+    vulnerability.validated = False
+
+
+def compute_priority_v1(vulnerability: Vulnerability) -> tuple[str, str]:
     score = _base_priority(vulnerability)
     reasons: list[str] = [f'severidad base={vulnerability.severity.lower()}']
     category = (vulnerability.category or '').lower()
     target = (vulnerability.target or '').lower()
+    title = (vulnerability.title or '').lower()
     confidence = (vulnerability.confidence or '').lower()
     verification = (vulnerability.verification_status or '').lower()
+    finding_role = (vulnerability.finding_role or '').lower()
 
     if category in {'secret', 'authentication', 'database', 'message-broker'}:
         score += 1
@@ -96,27 +195,60 @@ def compute_priority(vulnerability: Vulnerability) -> tuple[str, str]:
     if vulnerability.cvss_score is not None and vulnerability.cvss_score >= 7:
         score += 1
         reasons.append(f'cvss elevado={vulnerability.cvss_score}')
-    if vulnerability.source_count > 1:
+    if finding_role == 'validated' and category not in {'headers', 'discovery'} and (vulnerability.severity or '').lower() not in {'low', 'info'}:
         score += 1
-        reasons.append('múltiples fuentes correlacionadas')
+        reasons.append('hallazgo validado')
+    if vulnerability.source_count > 1 and verification == 'confirmed':
+        score += 1
+        reasons.append('múltiples fuentes correlacionadas con confirmación')
+    elif vulnerability.source_count > 1 and confidence == 'high':
+        score += 1
+        reasons.append('múltiples fuentes correlacionadas de alta confianza')
+    elif vulnerability.source_count > 1:
+        reasons.append('múltiples fuentes correlacionadas sin confirmación')
     if vulnerability.title.startswith('Multiple API Endpoints Exposed'):
         score += 1
         reasons.append('múltiples endpoints de API expuestos')
     if any(token in target for token in ('/metrics', '/actuator', '/swagger', '/openapi', '/graphql')) and 'localhost' not in target:
         score += 1
         reasons.append('exposición remota fuera de localhost')
-    if verification in {'heuristic', 'needs_manual_validation'}:
+    if verification in {'likely', 'heuristic', 'needs_manual_validation'}:
         score -= 1
         reasons.append(f'validación={verification}')
+    if finding_role == 'candidate':
+        score = min(score, 4)
+        reasons.append('hallazgo candidato pendiente de validación')
     if confidence == 'low':
         score -= 2
         reasons.append('confianza baja')
     elif confidence == 'medium' and vulnerability.needs_manual_validation:
         score -= 1
         reasons.append('requiere validación manual')
-    if category == 'discovery':
-        score = 1
-        reasons.append('hallazgo de descubrimiento, impacto limitado')
+    if category == 'headers' and (vulnerability.severity or '').lower() in {'low', 'info'}:
+        score = min(score, 1)
+        reasons.append('cabecera de bajo impacto')
+    if title in {'swagger ui exposed', 'openapi specification exposed', 'api surface exposed'}:
+        score = min(score, 3)
+        reasons.append('documentación o superficie api: prioridad acotada')
+    if title == 'graphql surface exposed':
+        max_score = 4 if verification == 'confirmed' and confidence == 'high' else 3
+        score = min(score, max_score)
+        reasons.append('superficie graphql pública: prioridad acotada')
+    if title == 'graphql endpoint accessible without authentication' and verification != 'confirmed':
+        score = min(score, 3)
+        reasons.append('graphql sin prueba suficiente de acceso indebido')
+    if title.startswith('multiple api endpoints exposed'):
+        max_score = 4 if verification == 'confirmed' and confidence == 'high' else 3
+        score = min(score, max_score)
+        reasons.append('inventario de múltiples endpoints api')
+    if finding_role == 'discovery' or category == 'discovery':
+        if title.startswith('multiple api endpoints exposed'):
+            score = min(score, 3)
+            score = max(score, 2)
+            reasons.append('inventario api amplio, prioridad de descubrimiento acotada')
+        else:
+            score = 1
+            reasons.append('hallazgo de descubrimiento, impacto limitado')
     if vulnerability.source == 'nuclei' and ('epmd' in target or 'rabbit' in (vulnerability.evidence_summary or '').lower() or 'erlang port mapper' in (vulnerability.title or '').lower()):
         score = max(score, 2)
         score = min(score, 3)
@@ -131,6 +263,98 @@ def compute_priority(vulnerability: Vulnerability) -> tuple[str, str]:
 
     score = max(1, min(score, 7))
     return PRIORITY_LABELS[score], '; '.join(reasons)
+
+
+def compute_priority(vulnerability: Vulnerability) -> tuple[str, int, str]:
+    category = (vulnerability.category or '').lower()
+    target = (vulnerability.target or '').lower()
+    title = (vulnerability.title or '').lower()
+    confidence = (vulnerability.confidence or '').lower()
+    verification = (vulnerability.verification_status or '').lower()
+    finding_role = (vulnerability.finding_role or '').lower()
+    validation_basis = (vulnerability.validation_basis or '').lower()
+    severity = (vulnerability.severity or 'unknown').lower()
+
+    score = SEVERITY_BASE_SCORE.get(severity, 0)
+    reasons: list[str] = [f'severidad base={severity}:{score}']
+
+    def bump(delta: int, reason: str) -> None:
+        nonlocal score
+        score += delta
+        reasons.append(f'{reason} ({delta:+d})')
+
+    bump(CONFIDENCE_ADJUSTMENTS.get(confidence, 0), f'confianza={confidence or "unknown"}')
+    bump(ROLE_ADJUSTMENTS.get(finding_role, 0), f'rol={finding_role or "unset"}')
+    bump(VALIDATION_BASIS_ADJUSTMENTS.get(validation_basis, 0), f'base={validation_basis or "unset"}')
+
+    if category in {'secret', 'authentication', 'database', 'message-broker'}:
+        bump(8, f'categoría sensible={category}')
+    elif category in {'panel-exposure', 'api', 'sensitive-file', 'network-service', 'message-broker', 'admin-surface', 'remote-access'}:
+        bump(5, f'categoría expuesta={category}')
+
+    if '/admin' in target or '/metrics' in target or '/swagger' in target or '/graphql' in target:
+        bump(8, 'endpoint de alto interés')
+    if any(token in target for token in ('/metrics', '/actuator', '/swagger', '/openapi', '/graphql')) and 'localhost' not in target:
+        bump(6, 'exposición remota fuera de localhost')
+    if vulnerability.source == 'nuclei' and any(token in target for token in ('/metrics', 'prometheus')):
+        bump(10, 'template nuclei sobre endpoint de métricas')
+    if vulnerability.cvss_score is not None and vulnerability.cvss_score >= 7:
+        bump(8, f'cvss elevado={vulnerability.cvss_score}')
+
+    if vulnerability.source_count > 1 and verification == 'confirmed':
+        bump(10, 'múltiples fuentes correlacionadas con confirmación')
+    elif vulnerability.source_count > 1 and confidence == 'high':
+        bump(6, 'múltiples fuentes correlacionadas de alta confianza')
+    elif vulnerability.source_count > 1:
+        reasons.append('múltiples fuentes correlacionadas sin confirmación (+0)')
+
+    if verification in {'likely', 'heuristic', 'needs_manual_validation'}:
+        bump(-8, f'validación={verification}')
+    if vulnerability.needs_manual_validation:
+        bump(-5, 'requiere validación manual')
+
+    if category == 'headers' and severity in {'low', 'info'}:
+        score = min(score, 25)
+        reasons.append('cabecera de bajo impacto (tope 25)')
+    elif category == 'headers' and severity == 'medium':
+        score = min(score, 59)
+        reasons.append('cabecera media de endurecimiento: tope medium')
+
+    if title in {'swagger ui exposed', 'openapi specification exposed', 'api surface exposed'}:
+        score = min(score, 49)
+        reasons.append('documentación o superficie api: tope medium')
+    if title == 'graphql surface exposed':
+        max_score = 59 if verification == 'confirmed' and confidence == 'high' else 49
+        score = min(score, max_score)
+        reasons.append(f'superficie graphql pública: tope {max_score}')
+    if title == 'graphql endpoint accessible without authentication' and verification != 'confirmed':
+        score = min(score, 59)
+        reasons.append('graphql sin prueba suficiente de acceso indebido (tope high bajo)')
+    if title.startswith('multiple api endpoints exposed'):
+        if finding_role == 'discovery':
+            score = min(score, 49)
+            score = max(score, 30)
+            reasons.append('inventario api amplio de descubrimiento: banda medium')
+        else:
+            max_score = 59 if verification == 'confirmed' and confidence == 'high' else 49
+            score = min(score, max_score)
+            reasons.append(f'inventario de múltiples endpoints api: tope {max_score}')
+    if finding_role == 'discovery' or category == 'discovery':
+        score = min(score, 34)
+        reasons.append('hallazgo de descubrimiento/contexto: tope medium bajo')
+    if vulnerability.source == 'nuclei' and ('epmd' in target or 'rabbit' in (vulnerability.evidence_summary or '').lower() or 'erlang port mapper' in title):
+        score = min(max(score, 30), 49)
+        reasons.append('middleware Erlang/RabbitMQ potencialmente expuesto: banda medium')
+
+    if vulnerability.source == 'nmap' and category in NETWORK_DISCOVERY_CATEGORIES and category not in {'database', 'admin-surface'}:
+        score = min(score, 49)
+        reasons.append('descubrimiento de red: tope medium')
+    if vulnerability.source == 'nmap' and category == 'web-service' and (vulnerability.port or '') in {'80', '443'}:
+        score = min(score, 20)
+        reasons.append('servicio web estándar esperado: tope low')
+
+    score = max(0, min(score, 100))
+    return _priority_label_from_score(score), score, '; '.join(reasons)
 
 
 def compute_confidence(vulnerability: Vulnerability) -> str:
@@ -173,35 +397,82 @@ def build_evidence_summary(vulnerability: Vulnerability) -> str | None:
     return compact
 
 
+def _stable_identifier(namespace: str, *parts: object) -> str:
+    raw = '|'.join('' if part is None else str(part).strip().lower() for part in (namespace, *parts))
+    return hashlib.sha1(raw.encode('utf-8')).hexdigest()
+
+
+def _normalise_validation_state(vulnerability: Vulnerability) -> None:
+    verification = (vulnerability.verification_status or '').lower()
+    confidence = (vulnerability.confidence or '').lower()
+    category = (vulnerability.category or '').lower()
+    inventory_like = _is_inventory_or_context_finding(vulnerability)
+
+    if verification == 'confirmed':
+        vulnerability.needs_manual_validation = False
+        if confidence == 'low':
+            vulnerability.confidence = 'medium'
+            confidence = 'medium'
+    elif verification in {'likely', 'needs_manual_validation', 'heuristic'}:
+        vulnerability.needs_manual_validation = True
+
+    if inventory_like:
+        vulnerability.needs_manual_validation = False
+    elif category in {'authentication', 'api', 'secret'} and verification != 'confirmed':
+        vulnerability.needs_manual_validation = True
+
+    if (
+        not inventory_like
+        and vulnerability.source != 'nuclei'
+        and confidence in {'low', 'medium'}
+        and category in {'authentication', 'api', 'panel-exposure', 'sensitive-file'}
+        and verification != 'confirmed'
+    ):
+        vulnerability.needs_manual_validation = True
+
+    if not vulnerability.verification_status:
+        if vulnerability.confidence == 'high' and not vulnerability.needs_manual_validation:
+            vulnerability.verification_status = 'confirmed'
+        elif vulnerability.needs_manual_validation:
+            vulnerability.verification_status = 'needs_manual_validation'
+        else:
+            vulnerability.verification_status = 'likely'
+
+
 def enrich_vulnerabilities(vulnerabilities: list[Vulnerability]) -> list[Vulnerability]:
     for vulnerability in vulnerabilities:
         vulnerability.confidence = compute_confidence(vulnerability)
         if vulnerability.category == 'discovery' and (vulnerability.verification_status or '').lower() == 'confirmed':
             vulnerability.confidence = 'high'
-        if vulnerability.category in {'authentication', 'api', 'secret'}:
-            vulnerability.needs_manual_validation = True
-        if (vulnerability.verification_status or '').lower() in {'likely', 'needs_manual_validation'}:
-            vulnerability.needs_manual_validation = True
-        vulnerability.priority, vulnerability.priority_reason = compute_priority(vulnerability)
+        _normalise_validation_state(vulnerability)
+        vulnerability.kind = infer_kind(vulnerability)
+        _apply_validation_model(vulnerability)
+        vulnerability.priority, vulnerability.priority_score, vulnerability.priority_reason = compute_priority(vulnerability)
+        vulnerability.scoring_version = SCORING_VERSION
         vulnerability.recommendation = vulnerability.recommendation or compute_recommendation(vulnerability)
         vulnerability.evidence_summary = clean_evidence(vulnerability.evidence_summary or build_evidence_summary(vulnerability))
         vulnerability.evidence = clean_evidence(vulnerability.evidence, max_len=1200)
-        vulnerability.kind = infer_kind(vulnerability)
         asset = normalize_asset(vulnerability.target or vulnerability.matched_at or '')
         vulnerability.target_host_original = asset.get('target_host_original')
         vulnerability.asset_host = asset.get('asset_host')
+        vulnerability.asset_host_resolved = asset.get('asset_host_resolved')
         vulnerability.asset_port = asset.get('asset_port')
         if vulnerability.host and not vulnerability.asset_host:
-            vulnerability.asset_host = vulnerability.host
+            vulnerability.asset_host = str(vulnerability.host).lower()
+        if vulnerability.host and not vulnerability.asset_host_resolved and str(vulnerability.host).lower() != str(vulnerability.asset_host or '').lower():
+            vulnerability.asset_host_resolved = str(vulnerability.host).lower()
         if vulnerability.port and not vulnerability.asset_port:
             vulnerability.asset_port = vulnerability.port
-        if vulnerability.confidence in {'low', 'medium'} and vulnerability.category in {'authentication', 'api', 'panel-exposure', 'sensitive-file'}:
-            vulnerability.needs_manual_validation = True
-        if not vulnerability.verification_status:
-            if vulnerability.confidence == 'high' and not vulnerability.needs_manual_validation:
-                vulnerability.verification_status = 'confirmed'
-            elif vulnerability.needs_manual_validation:
-                vulnerability.verification_status = 'needs_manual_validation'
-            else:
-                vulnerability.verification_status = 'likely'
+        vulnerability.finding_id = _stable_identifier(
+            'finding',
+            *(vulnerability.dedup_key()),
+            vulnerability.asset_host,
+            vulnerability.asset_port,
+        )
+        vulnerability.correlation_id = _stable_identifier(
+            'correlation',
+            *(vulnerability.correlation_key()),
+            vulnerability.asset_host,
+            vulnerability.asset_port,
+        )
     return vulnerabilities
