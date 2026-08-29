@@ -6,6 +6,7 @@
 - Adds architecture documentation, contribution guidance, code of conduct and GitHub issue/PR templates.
 - Adds MIT licensing and package metadata for a more reproducible public release.
 - Adds a scheduled dependency-audit workflow and a package build gate to CI.
+- Runs the dependency audit on pushes as well as pull requests, schedules and manual dispatches.
 - Documents the local-first system boundary and the checks required before publishing scan tooling.
 
 ## v10.22.9 quality hardening
