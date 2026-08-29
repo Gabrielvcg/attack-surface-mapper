@@ -1,641 +1,212 @@
 # Attack Surface Mapper
 
-## Overview
+[![CI](https://github.com/Gabrielvcg/attack-surface-mapper/actions/workflows/ci.yml/badge.svg)](https://github.com/Gabrielvcg/attack-surface-mapper/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![Version](https://img.shields.io/badge/version-10.22.10-0F766E)](CHANGELOG.md)
+[![License](https://img.shields.io/badge/license-MIT-111827)](LICENSE)
 
-Attack Surface Mapper is a **pipeline-based security analysis tool** focused on discovering, validating and reporting the attack surface of web applications and exposed services.
+Pipeline-based attack-surface discovery, validation, correlation and reporting for authorised security testing and controlled labs.
 
-It is designed to go beyond a simple scanner. The project combines:
+Attack Surface Mapper combines HTTP discovery, custom AppSec validators, optional Nuclei and Nmap integrations, finding correlation, prioritisation and multi-format reporting. The project is designed around an explicit trade-off between noise, coverage and signal quality instead of treating every discovered endpoint as a vulnerability.
 
-- **HTTP discovery and crawling**
-- **passive and active validation**
-- **optional network reconnaissance**
-- **correlation and deduplication of findings**
-- **human-readable and machine-readable reporting**
+> **Responsible use:** run this tool only against systems you own or are explicitly authorised to test. Start with a passive profile and increase coverage deliberately. See [SECURITY.md](SECURITY.md) before scanning.
 
-The result is a tool that can operate with different noise levels, from very stealthy observation to broader enumeration and more aggressive validation.
+## Why this project is interesting
 
----
+The engineering focus is the pipeline around the scanners:
 
-## Main Technologies Used
+- one shared `Vulnerability` contract across HTTP, browser, Nuclei and Nmap evidence;
+- staged execution with reusable observed URLs, actions and API references;
+- semantic correlation and deduplication to reduce duplicate and low-signal findings;
+- explicit `confidence`, `finding_role`, `verification_status` and numeric priority scoring;
+- passive, safe-recon, enumeration and active profiles with different operational risk;
+- deterministic JSON, Markdown, HTML and CSV outputs for human review and automation;
+- aggregate reporting across targets, comparison between runs and optional Elasticsearch bundles;
+- tests for parsers, false-positive regressions, reporting contracts and lab behaviour.
 
-### Python
-The project is implemented in **Python 3.11+** and organised in a modular way so each responsibility is separated:
-- orchestration
-- pipeline stages
-- collectors
-- validators
-- parsers
-- reporting
-- batch aggregation
+## Architecture
 
-### Nuclei
-**Nuclei** is used for template-based security checks.  
-It provides fast extensible detection and its findings are parsed and converted into the common internal vulnerability model.
-
-### Nmap
-**Nmap** is optional and used to enrich the analysis with **open ports and service discovery**.  
-This allows the tool to correlate web findings with network exposure when needed.
-
-### requests / Scrapling
-The HTTP layer supports different backends:
-- `requests`
-- `scrapling`
-- `auto`
-
-This makes it possible to run:
-- quieter passive navigation
-- standard crawling
-- more dynamic discovery depending on the selected profile
-
-### Playwright
-**Playwright** is only required for the **dynamic active profile**.  
-Passive profiles do **not** require browser installation.
-
-### Custom validation and correlation
-The core value of the project is not only running third-party tools, but also adding:
-- custom validators
-- attack-surface discovery logic
-- endpoint classification
-- finding enrichment
-- correlation
-- prioritisation
-- false-positive reduction
-
----
-
-## High-Level Architecture
-
-The project is built as a **multi-stage pipeline**.
-
-### 1. Discovery
-The tool first collects observable surface from the target:
-- root response
-- linked resources
-- forms
-- JavaScript hints
-- candidate endpoints
-- observed navigation paths
-
-### 2. Validation
-It then validates the discovered surface using:
-- Nuclei
-- security header checks
-- TLS checks
-- authentication surface analysis
-- admin/panel checks
-- API exposure checks
-- sensitive file checks
-- secret discovery
-
-### 3. Optional network reconnaissance
-When enabled, Nmap adds:
-- open ports
-- service banners
-- network exposure categories
-
-### 4. Correlation
-The raw information is then processed to:
-- deduplicate findings
-- correlate related evidence
-- improve prioritisation
-- separate true issues from discovered/protected surface
-
-### 5. Reporting
-Finally, the tool generates:
-- per-target reports
-- aggregate run reports
-- JSON summaries
-- Markdown / CSV / HTML outputs
-- optional Elasticsearch export bundles from an existing run
-
----
-
-## Project Structure
-
-```text
-attack_surface_mapper/
-├── main.py
-├── pyproject.toml
-├── requirements.txt
-├── README.md
-├── CHANGELOG.md
-├── docs/
-│   ├── OUTPUTS.md
-│   ├── PIPELINE.md
-│   ├── PROFILES.md
-│   └── STRUCTURE.md
-├── config/
-│   ├── examples/
-│   └── profiles/
-│       ├── active-aggressive.yml
-│       ├── passive-recon-enum.yml
-│       ├── passive-recon-safe.yml
-│       ├── passive-recon.yml
-│       └── passive-stealth.yml
-├── scripts/
-│   └── clean_scans.sh
-├── src/
-│   └── attack_surface_mapper/
-│       ├── analysis/
-│       ├── batch/
-│       ├── collectors/
-│       │   ├── crawling/
-│       │   ├── nmap/
-│       │   ├── nuclei/
-│       │   └── web/
-│       ├── core/
-│       ├── models/
-│       ├── parsers/
-│       ├── pipeline/
-│       ├── reporting/
-│       ├── runners/
-│       ├── utils/
-│       ├── validators/
-│       ├── http_client.py
-│       └── orchestrator.py
-├── tests/
-└── scans/
+```mermaid
+flowchart LR
+    T[Authorised targets] --> C[Collectors]
+    C --> H[HTTP and browser discovery]
+    C --> N[Nuclei optional]
+    C --> M[Nmap optional]
+    H --> V[Custom validators]
+    N --> P[Common finding model]
+    M --> P
+    V --> P
+    P --> X[Correlation and enrichment]
+    X --> R[Reports and run manifest]
+    R --> O[Markdown / HTML / CSV / JSON]
+    R --> E[Optional Elasticsearch bundle]
 ```
 
-### Important directories
+Execution is orchestrated as:
 
-#### `config/profiles/`
-Contains ready-to-use operational profiles:
-- `passive-stealth`
-- `passive-recon-safe`
-- `passive-recon-enum`
-- `active-aggressive`
+1. Nuclei collection when enabled.
+2. Nmap collection when enabled.
+3. Browser discovery and crawling.
+4. Passive HTTP validation.
+5. Correlation and enrichment.
+6. Per-target and aggregate reporting.
 
-#### `src/attack_surface_mapper/pipeline/`
-Defines the execution stages.
+See [the pipeline guide](docs/PIPELINE.md) and [the architecture note](docs/ARCHITECTURE.md) for the detailed contracts.
 
-Current stage order:
-1. `NucleiStage`
-2. `NmapStage`
-3. `BrowserDiscoveryStage`
-4. `PassiveValidationStage`
-5. `CorrelationStage`
-6. `ReportingStage`
+## Quick start
 
-#### `src/attack_surface_mapper/collectors/`
-Responsible for gathering information from:
-- HTTP crawling
-- browser discovery
-- Nuclei
-- Nmap
+### Requirements
 
-#### `src/attack_surface_mapper/validators/`
-Contains the project-specific validation logic:
-- headers
-- TLS
-- authentication
-- admin panels
-- APIs
-- sensitive files
-- discovery
-- secrets
-- fingerprinting
+- Python 3.11 or newer.
+- Nuclei in `PATH` for profiles that enable Nuclei.
+- Nmap in `PATH` only when network reconnaissance is enabled.
+- Playwright browsers only for dynamic Scrapling execution.
 
-#### `src/attack_surface_mapper/reporting/`
-Builds final reports in different formats.
-
-#### `scans/`
-Stores execution results.
-
----
-
-## Installation
-
-### 1. Create virtual environment
+### Install
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
+python -m pip install -e ".[dev]"
 ```
 
-### 2. Optional: install Playwright browsers
+On Windows PowerShell:
 
-Only needed for the **active dynamic profile**:
+```powershell
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -e ".[dev]"
+```
+
+Install external tools only when needed. For dynamic crawling:
 
 ```bash
 python -m playwright install
 ```
 
-### 3. External tools required
+### First scan
 
-#### Required
-- **Python 3.11+**
-- **Nuclei** available in `PATH`
-- updated Nuclei templates
+Use a target you own or a local lab target. The safe profile performs GET-oriented, observed-surface discovery without Nuclei, Nmap or invented endpoint probing:
 
-#### Optional
-- **Nmap** available in `PATH` if you want network reconnaissance
-- **Playwright browsers** for dynamic crawling in the active profile
+```bash
+python main.py --profile passive-recon-safe https://TARGET-YOU-AUTHORISE/
+```
 
----
+For a minimal local smoke run:
 
-## Configuration Model
+```bash
+python main.py --profile passive-stealth https://example.com/
+```
 
-The tool can be configured in two ways:
+The CLI target is combined with targets from YAML and deduplicated. It does not replace YAML targets; this keeps multi-target configuration explicit.
 
-### CLI configuration
-Useful for direct execution and quick testing.
+## Operational profiles
+
+| Profile | Noise | Coverage | External tools | Intended use |
+| --- | --- | --- | --- | --- |
+| `passive-stealth` | Lowest | Observed surface only | None | Low-noise authorised observation |
+| `passive-recon-safe` | Low | Safe navigation and JS hints | None | Recommended starting point |
+| `passive-recon-enum` | Medium | Controlled endpoint enumeration | Nuclei | Authorised recon with broader coverage |
+| `active-aggressive` | Highest | HTTP, browser, Nuclei and Nmap | Nuclei, Nmap, Playwright | Approved audits and lab environments |
+
+Profile files live in [`config/profiles`](config/profiles). The older `passive-recon`, `passive`, `active` and `deep` names remain available for compatibility; use the explicit profiles above for new runs.
 
 Examples:
-- target passed directly as positional argument
-- profile selection with `--profile`
-- report format selection
-- enabling/disabling modules
-- Nmap tuning
-
-### YAML configuration
-Profiles and example configurations are stored under:
-
-```text
-config/profiles/
-config/examples/
-```
-
-Important note:
-
-> If a target is passed via CLI, it is added to the targets defined inside the YAML profile and the final list is deduplicated.
-
-This is useful because the tutor can execute the same profile against another target without modifying the YAML.
-
----
-
-## Main Profiles
-
-The project includes several operational profiles.
-
-### 1. `passive-stealth`
-Designed for **very low-noise observation**.
-
-Characteristics:
-- no Nuclei
-- no Nmap
-- no invented baseline probes
-- no probing of common hardcoded paths
-- only observed navigation and linked resources
-
-Recommended when the goal is to minimise visible activity in logs.
-
-Example:
 
 ```bash
-python main.py --profile passive-stealth https://example.com/
-```
-
----
-
-### 2. `passive-recon-safe`
-Designed for **safe passive reconnaissance**.
-
-Characteristics:
-- GET-only
-- realistic browsing
-- JavaScript hints extraction
-- observed surface reuse
-- avoids aggressive hardcoded enumeration
-
-Recommended when the goal is to balance:
-- coverage
-- realism
-- moderate noise
-
-Example:
-
-```bash
-python main.py --profile passive-recon-safe https://example.com/
-```
-
----
-
-### 3. `passive-recon-enum`
-Designed for **visible but controlled enumeration**.
-
-Characteristics:
-- GET-only
-- expands the observed surface with common endpoint probing
-- broader coverage than `passive-recon-safe`
-- still below active-aggressive in noise
-
-Recommended when the goal is to enlarge the discovered surface without jumping directly to active mode.
-
-Example:
-
-```bash
-python main.py --profile passive-recon-enum https://example.com/
-```
-
----
-
-### 4. `active-aggressive`
-Designed for **maximum coverage**.
-
-Characteristics:
-- adds Nuclei
-- can add Nmap
-- deeper validation
-- dynamic crawling when available
-- highest expected noise
-
-Recommended only when broader visibility matters more than stealth.
-
-Profile file:
-```text
-config/profiles/active-aggressive.yml
-```
-
-CLI equivalent commonly used in this project:
-```bash
-python main.py --profile active https://example.com/
-```
-
----
-
-## Example Usage
-
-### Simple scan against a single target
-
-```bash
-python main.py https://example.com/
-```
-
-### Run a safe passive reconnaissance profile
-
-```bash
-python main.py --profile passive-recon-safe https://example.com/
-```
-
-### Run controlled enumeration
-
-```bash
-python main.py --profile passive-recon-enum https://example.com/
-```
-
-### Run low-noise profile
-
-```bash
-python main.py --profile passive-stealth https://example.com/
-```
-
-### Run active profile
-
-```bash
-python main.py --profile active https://example.com/
-```
-
-### Use a targets file
-
-```bash
+python main.py --profile passive-stealth https://TARGET-YOU-AUTHORISE/
+python main.py --profile passive-recon-safe https://TARGET-YOU-AUTHORISE/
+python main.py --profile passive-recon-enum https://TARGET-YOU-AUTHORISE/
+python main.py --profile active-aggressive --use-nmap https://TARGET-YOU-AUTHORISE/
 python main.py --targets-file targets.txt --profile passive-recon-safe
-```
-
-### Use YAML configuration
-
-```bash
 python main.py --config config/examples/config.example.yml
 ```
 
-### Add a CLI target to YAML/profile targets
+## Output contract
 
-```bash
-python main.py --profile passive-recon-safe https://proba-despregamento.onrender.com/
+Each run is written below `scans/<run-name-or-timestamp>/`:
+
+```text
+run_manifest.json
+reports/
+  aggregate_summary.json
+  aggregate_report.md
+  aggregate_findings.csv
+targets/<target>/
+  findings/vulnerabilities.json
+  reports/report.md
+  reports/report.html
+  reports/report.csv
+  reports/report.summary.json
+  artifacts/nuclei_raw.jsonl
+  artifacts/nmap_raw.xml
+  debug/
 ```
 
-### Run with Nmap enabled
+Start with `reports/aggregate_report.md` for a human overview, then use `run_manifest.json` and the structured summaries to understand what actually ran. Raw artefacts are retained per target and should be treated as potentially sensitive scan data.
+
+The common finding contract includes stable IDs, source, severity, category, confidence, validation status, evidence summaries, asset identity, correlation metadata and scoring rationale. See [OUTPUTS.md](docs/OUTPUTS.md).
+
+## Local lab validation
+
+The repository includes regression tests and a repeatable lab helper for controlled Juice Shop and DVWA environments. Do not point the lab scripts at an unowned target.
 
 ```bash
-python main.py https://example.com/ --profile deep --use-nmap --nmap-top-ports 200 --debug
+python -m pytest -q
+python -m compileall -q main.py src
 ```
 
----
-
-## Simple Demo Flow
-
-A good way to evaluate the project is to execute these three profiles against the same target:
-
-```bash
-python main.py --profile passive-stealth https://TARGET/
-python main.py --profile passive-recon-safe https://TARGET/
-python main.py --profile passive-recon-enum https://TARGET/
-```
-
-Then compare:
-
-- number of visible requests in logs
-- whether hardcoded probing appears
-- amount of discovered endpoints
-- quality and relevance of findings
-- difference between safer recon and broader enumeration
-
-This is one of the most important values of the project:
-**the ability to control the trade-off between stealth, coverage and signal quality**.
-
-### Repeatable local validation
-
-For quick regression checks of the passive profiles, a local Juice Shop container is a practical baseline:
-
-```bash
-docker run -d --rm --name asm-juice -p 3000:3000 bkimminich/juice-shop
-python main.py --profile passive-stealth http://localhost:3000
-python main.py --profile passive-recon-safe http://localhost:3000
-docker stop asm-juice
-```
-
-When comparing both runs, start with:
-
-- `run_manifest.json`
-- `reports/aggregate_summary.json`
-- `targets/.../reports/report.summary.json`
-
-For a repeatable PowerShell flow on Windows:
+On Windows, the PowerShell validation helper is:
 
 ```powershell
-.\scripts\validate_labs.ps1 -Labs juice-shop
-.\scripts\validate_labs.ps1 -Labs juice-shop -IncludeEnum
+.\scripts\validate_labs.ps1
 ```
 
-The script now validates the generated `run_manifest.json`, `aggregate_summary.json`
-and `report.summary.json`, and it accepts `-MinFindings` to require a minimum number
-of correlated findings per run.
-It also exports `reviews/lab_findings_review.csv` so you can label findings as
-`verdadero`, `falso` or `dudoso` during false-positive review.
-When `-IncludeEnum` is enabled, the script uses
-`config/examples/lab-passive-recon-enum.yml` so the enum profile stays reproducible
-in Docker without depending on a host-side Nuclei install.
+The lab flow exercises passive profiles, manifest validation, stable IDs and a minimum findings threshold. It is intentionally separate from the default unit-test suite.
 
----
-
-## Output Structure
-
-Each execution creates a run directory similar to:
+## Project map
 
 ```text
-scans/
-  2026-03-28_142330/
-    run_manifest.json
-    reports/
-      aggregate_summary.json
-      aggregate_report.md
-      aggregate_findings.csv
-    targets/
-      https_example.com_/
-        findings/
-          vulnerabilities.json
-        reports/
-          report.md
-          report.html
-          report.csv
-          report.summary.json
-        artifacts/
-          nuclei_raw.jsonl
-          nmap_raw.xml
-        debug/
-          debug_http_trace.json
-          debug_probe.json
-          debug_counts.json
+main.py                         CLI and run orchestration
+src/attack_surface_mapper/      Pipeline implementation
+config/profiles/                Operational profile presets
+config/examples/                Reproducible YAML examples
+tests/                          Unit and regression coverage
+docs/PIPELINE.md                Stage and data-flow details
+docs/PROFILES.md                Profile semantics and trade-offs
+docs/OUTPUTS.md                 Output contract and artefacts
+docs/ARCHITECTURE.md            Design boundaries and decisions
+scripts/                        Lab validation and export helpers
+SECURITY.md                     Authorised-use and vulnerability policy
 ```
 
-### Run-level outputs
-Available at the root of each run:
-- `run_manifest.json`
-- `reports/aggregate_summary.json`
-- `reports/aggregate_report.md`
-- `reports/aggregate_findings.csv`
-- `elasticsearch/` after running the export helper
+The fastest review path is:
 
-### Target-level outputs
-Available per target:
-- `findings/vulnerabilities.json`
-- `reports/report.*`
-- `debug/debug_http_trace.json`
-- `debug/debug_probe.json`
-- `debug/debug_counts.json`
+1. [Architecture](docs/ARCHITECTURE.md)
+2. [Profiles](docs/PROFILES.md)
+3. [Pipeline](docs/PIPELINE.md)
+4. [Output contract](docs/OUTPUTS.md)
+5. [Tests](tests)
 
-### Discovery metadata
-`run_manifest.json` also captures useful execution metadata such as:
-- executed stages
-- collectors used
-- observed URLs
-- observed actions count
-- observed API calls
+## Quality and security posture
 
----
+Every push and pull request runs source compilation and the full pytest suite through GitHub Actions. Dependency auditing is defined in the security workflow. Generated scan outputs, local credentials, virtual environments, editor metadata and build artefacts are excluded by `.gitignore`.
 
-## Which Reports to Review
+Before a public release, review the complete reachable Git history for credentials and inspect generated examples for real hosts, personal data and operational identifiers. Never commit `.env` files, private keys, tokens, VPS credentials or raw reports from real engagements.
 
-### 1. `reports/aggregate_report.md`
-Best file for a quick human-readable overview of the whole run.
+## Roadmap
 
-### 2. `reports/aggregate_summary.json`
-Useful for structured review and automation.
+- Improve reproducible lab fixtures and representative report samples.
+- Continue reducing false positives without hiding ambiguous evidence.
+- Keep output schemas stable while extending integrations.
+- Add focused performance benchmarks for large target sets.
 
-### 3. `targets/.../findings/vulnerabilities.json`
-Contains the final structured findings per target.
+## License
 
-### 4. `run_manifest.json`
-Useful to understand:
-- which stages ran
-- which collectors were used
-- what was actually observed
+Released under the [MIT License](LICENSE). Use of the tool remains subject to the authorised-testing requirements in [SECURITY.md](SECURITY.md).
 
-### 5. console logs
-Very useful to compare how noisy each profile is.
+## Contact and contribution
 
-### 6. `elasticsearch/`
-Optional post-scan bundle for Elasticsearch ingestion.
-It is generated from an existing run and includes:
-- index mappings
-- `_bulk` NDJSON exports
-- helper flows for manual/Kibana Dev Tools, `curl` and Python
-
-Example:
-
-```bash
-python scripts/export_elasticsearch_bundle.py --run-dir scans/lab_juice_shop_passive_recon_enum
-```
-
-This creates:
-
-```text
-scans/<run>/elasticsearch/
-  findings_mapping.json
-  summaries_mapping.json
-  runs_mapping.json
-  findings_bulk.ndjson
-  summaries_bulk.ndjson
-  runs_bulk.ndjson
-  manual_kibana_devtools.md
-  ingest_with_curl.sh
-  ingest_with_python.py
-  export_manifest.json
-```
-
-Default indices:
-- `attack-surface-mapper-findings`
-- `attack-surface-mapper-summaries`
-- `attack-surface-mapper-runs`
-
-You can change the prefix with:
-
-```bash
-python scripts/export_elasticsearch_bundle.py --run-dir scans/<run> --index-prefix asm-demo
-```
-
----
-
-## What Makes the Project Valuable
-
-This project is valuable because it is not limited to raw scanner execution.
-
-It adds:
-- an explicit pipeline
-- operational profiles
-- reusable discovery surface
-- custom validation modules
-- output normalisation
-- finding correlation
-- human-oriented reporting
-- machine-readable artefacts
-- lower-noise recon modes
-- progressive escalation from stealth to active analysis
-
-In practice, this makes it useful both as:
-- a technical project with real engineering depth
-- an operational prototype for attack-surface analysis
-
----
-
-## Recommended Files for the Reviewer
-
-If someone wants to understand the project quickly, the best order is:
-
-1. `README.md`
-2. `docs/PROFILES.md`
-3. `docs/PIPELINE.md`
-4. `docs/OUTPUTS.md`
-5. `CHANGELOG.md`
-
----
-
-## Notes
-
-- Passive profiles do **not** require Playwright browsers.
-- Active dynamic mode may require `python -m playwright install`.
-- Nmap is optional.
-- CLI target input is combined with YAML targets and deduplicated.
-- The active YAML profile file is called `active-aggressive.yml`; the CLI accepts both `active` and `active-aggressive`.
-
----
-
-## Changelog
-
-For the full technical evolution of the project, see:
-
-```text
-CHANGELOG.md
-```
+Bug reports and improvements are welcome through the repository issue tracker. For security-sensitive reports, follow [SECURITY.md](SECURITY.md) and do not publish credentials or live-target details in a public issue.

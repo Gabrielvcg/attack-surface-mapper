@@ -1,5 +1,13 @@
 # Attack Surface Mapper
 
+## v10.22.10 public-release hardening
+
+- Reworks the README around the actual pipeline, profile trade-offs, output contract and responsible-use boundary.
+- Adds architecture documentation, contribution guidance, code of conduct and GitHub issue/PR templates.
+- Adds MIT licensing and package metadata for a more reproducible public release.
+- Adds a scheduled dependency-audit workflow and a package build gate to CI.
+- Documents the local-first system boundary and the checks required before publishing scan tooling.
+
 ## v10.22.9 quality hardening
 
 - Repairs corrupted UTF-8 text in API/auth validation evidence so generated Spanish reports remain readable and professional.
