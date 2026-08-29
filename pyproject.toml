@@ -4,8 +4,20 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "attack-surface-mapper"
-version = "10.22.9"
+version = "10.22.10"
 description = "Pipeline-based attack-surface discovery, validation, correlation, and reporting."
+readme = "README.md"
+license = {file = "LICENSE"}
+authors = [{name = "Gabriel Vacaro Goytia"}]
+keywords = ["appsec", "attack-surface", "security-automation", "nuclei", "nmap", "reconnaissance"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Information Technology",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Topic :: Security",
+]
 requires-python = ">=3.11"
 dependencies = [
   "requests>=2.31.0",
@@ -18,6 +30,11 @@ dependencies = [
 dev = [
   "pytest>=8.3.0,<9",
 ]
+
+[project.urls]
+Documentation = "https://github.com/Gabrielvcg/attack-surface-mapper/tree/main/docs"
+Issues = "https://github.com/Gabrielvcg/attack-surface-mapper/issues"
+Repository = "https://github.com/Gabrielvcg/attack-surface-mapper"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
